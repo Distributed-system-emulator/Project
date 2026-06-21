@@ -36,6 +36,8 @@ public class Client extends AbstractClient {
   @Override
   public final Receive createReceive() {
     return createBaseReceiveBuilder()
+        // Listener should be one client itself and should be invoked to log
+        // read/write/timeout read/timeout write
         // TODO add your message handlers here .match(, )
         .build();
   }

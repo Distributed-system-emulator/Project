@@ -324,7 +324,7 @@ public abstract class AbstractReplica extends AbstractActor {
   // =================================================================================
 
   /**
-   * Must be invoked whenever this replica recognises a new coordinator.
+   * Must be invoked whenever this replica recognizes a new coordinator.
    * Call this both when:
    * - the replica IS the new coordinator (after deciding it won the election),
    * and

@@ -50,6 +50,8 @@ public class Replica extends AbstractReplica {
   @Override
   public final Receive createReceive() {
     return createBaseReceiveBuilder()
+        // Listener should be one replica and should be invoked to log
+        // coordElect / write / join coordination election / crash message received
         // TODO add your message handlers here .match(, )
         .build();
   }
