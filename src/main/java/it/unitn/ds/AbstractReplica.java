@@ -319,6 +319,27 @@ public abstract class AbstractReplica extends AbstractActor {
     }
   }
 
+  public static class Heartbeat implements Serializable {
+    public final int coordinatorId;
+
+    Heartbeat(int coordinatorId) {
+      this.coordinatorId = coordinatorId;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (obj instanceof Heartbeat) {
+        return ((Heartbeat) obj).coordinatorId == this.coordinatorId;
+      }
+      return false;
+    }
+
+    @Override
+    public String toString() {
+      return "Heartbeat(coordinator=" + coordinatorId + ")";
+    }
+  }
+
   // =================================================================================
   // Mandatory API Callbacks
   // =================================================================================

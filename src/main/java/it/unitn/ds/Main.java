@@ -6,9 +6,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
+import akka.actor.Actor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
+import it.unitn.ds.AbstractReplica.Crash;
 import it.unitn.ds.AbstractReplica.InitSystem;
 
 public class Main {
@@ -84,10 +88,19 @@ public class Main {
 
     // TODO: Implement your main logic
 
-    system.terminate();
+    // Schedule a crash of the coordinator after 1000 ms
+    final Crash crashMsg = new Crash(Crash.Type.Heartbeat, 0);
+    final Map<Integer, ActorRef> rg = replicasGroup;
+    Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+      rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
+    }, 1000, TimeUnit.MILLISECONDS);
 
-    System.out.println("\n========================================");
-    System.out.println("END");
-    System.out.println("========================================\n");
+    /*
+     * system.terminate();
+     * 
+     * System.out.println("\n========================================");
+     * System.out.println("END");
+     * System.out.println("========================================\n");
+     */
   }
 }
