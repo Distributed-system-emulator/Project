@@ -3,9 +3,26 @@ package it.unitn.ds;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 public class Replica extends AbstractReplica {
+
+  // === ATTRIBUTES ===
+  /**
+   * Represents the list of replicas.
+   */
+  private Map<Integer, ActorRef> replicasGroup;
+
+  /**
+   * The identifier of the coordinator replica within the group.
+   */
+  private Integer coordinatorId;
+
+  // === CONSTRUCTORS ===
+
   public Replica(int id) {
     this(id,
         AbstractReplica.MIN_LATENCY,
@@ -16,8 +33,10 @@ public class Replica extends AbstractReplica {
 
   public Replica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval, Optional<ActorRef> listener) {
     super(id, minLatency, maxLatency, coordinatorBeatInterval, listener);
-    // TODO: implement
+    replicasGroup = new HashMap<Integer, ActorRef>();
   }
+
+  // === PROPS ===
 
   public static Props props(int id, int minLatency, int maxLatency, int coordinatorBeatInterval) {
     return Props.create(Replica.class,
@@ -30,6 +49,8 @@ public class Replica extends AbstractReplica {
     return Props.create(Replica.class,
         () -> new Replica(id, minLatency, maxLatency, coordinatorBeatInterval, Optional.ofNullable(listener)));
   }
+
+  // === METHODS ===
 
   @Override
   public int getSystemNumberOfActors() {
@@ -44,7 +65,11 @@ public class Replica extends AbstractReplica {
 
   @Override
   public void initSystem(InitSystem sysInit) {
-    // TODO: implement
+    // Initialize the replica group with what is contained on the initialization
+    // message
+
+    replicasGroup = Collections.unmodifiableMap(sysInit.group);
+    coordinatorId = sysInit.coordinator_id;
   }
 
   @Override
