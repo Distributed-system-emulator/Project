@@ -21,7 +21,7 @@ public class Main {
     System.out.println("START");
     System.out.println("========================================\n");
 
-    final int N_REPLICAS = 4;
+    final int N_REPLICAS = 3;
     final int N_CLIENTS = 4;
     final int COORDINATOR_ID = N_REPLICAS - 1;
     final ActorSystem system = ActorSystem.create("TestMain");

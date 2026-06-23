@@ -3,6 +3,7 @@ package it.unitn.ds;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -298,10 +299,12 @@ public abstract class AbstractReplica extends AbstractActor {
   public static class ElectionStarted implements Serializable {
     public final int replicaId;
     public final int crashedCoordinatorId;
+    public final List<Integer> previousReplicaList;
 
-    public ElectionStarted(int replicaId, int crashedCoordinatorId) {
+    public ElectionStarted(int replicaId, int crashedCoordinatorId, List<Integer> previousReplicaList) {
       this.replicaId = replicaId;
       this.crashedCoordinatorId = crashedCoordinatorId;
+      this.previousReplicaList = previousReplicaList;
     }
 
     @Override
@@ -337,6 +340,27 @@ public abstract class AbstractReplica extends AbstractActor {
     @Override
     public String toString() {
       return "Heartbeat(coordinator=" + coordinatorId + ")";
+    }
+  }
+
+  public static class ElectionAck implements Serializable {
+    public final int recipientReplicaId;
+
+    ElectionAck(int recipientReplicaId) {
+      this.recipientReplicaId = recipientReplicaId;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (obj instanceof ElectionAck) {
+        return ((ElectionAck) obj).recipientReplicaId == this.recipientReplicaId;
+      }
+      return false;
+    }
+
+    @Override
+    public String toString() {
+      return "ElectionAck(recipientReplica=" + recipientReplicaId + ")";
     }
   }
 
@@ -377,9 +401,9 @@ public abstract class AbstractReplica extends AbstractActor {
    * @param crashedCoordinatorId the id of the coordinator whose crash triggered
    *                             this election
    */
-  final void callbackOnElectionStarted(int crashedCoordinatorId) {
+  final void callbackOnElectionStarted(int crashedCoordinatorId, List previousReplicaList) {
     log("ELECTION STARTED for crashed coordinator: " + crashedCoordinatorId);
-    listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId), getSelf()));
+    listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId, previousReplicaList), getSelf()));
   }
 
   // =================================================================================
