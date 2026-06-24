@@ -3,7 +3,6 @@ package it.unitn.ds;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -246,6 +245,9 @@ public abstract class AbstractReplica extends AbstractActor {
     }
   }
 
+  public static class SendHeartbeat implements java.io.Serializable {
+  }
+
   /**
    * Synchronization message
    */
@@ -414,7 +416,7 @@ public abstract class AbstractReplica extends AbstractActor {
    * @param crashedCoordinatorId the id of the coordinator whose crash triggered
    *                             this election
    */
-  final void callbackOnElectionStarted(int crashedCoordinatorId, Map previousReplicasMap) {
+  final void callbackOnElectionStarted(int crashedCoordinatorId, Map<Integer, Integer> previousReplicasMap) {
     log("ELECTION STARTED for crashed coordinator: " + crashedCoordinatorId);
     listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId, previousReplicasMap), getSelf()));
   }

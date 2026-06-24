@@ -100,6 +100,10 @@ public class Main {
       rg.get(6).tell(crashMsg, Actor.noSender());
     }, 5000, TimeUnit.MILLISECONDS);
 
+    Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+      rg.get(5).tell(crashMsg, Actor.noSender());
+    }, 15000, TimeUnit.MILLISECONDS);
+
     /*
      * system.terminate();
      * 
