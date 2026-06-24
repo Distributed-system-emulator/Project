@@ -46,6 +46,8 @@ public class Replica extends AbstractReplica {
    */
   private ScheduledFuture<?> heartbeatReceivedStatusTask;
 
+  private ScheduledFuture<?> electionTimeoutTask;
+
   /**
    * This attribute is check every
    * {@link coordinatorBeatInterval}+{@link maxLatency} to see whether an
@@ -90,6 +92,7 @@ public class Replica extends AbstractReplica {
     hasElectionStarted = false;
     wasElectionAckReceived = false;
     electionRetries = 0;
+    electionTimeoutTask = null;
   }
 
   // === PROPS ===
@@ -137,6 +140,8 @@ public class Replica extends AbstractReplica {
         log("Crash: Invalid crash type(" + how_to_crash.type + ")");
     }
 
+    cancelElectionTimeout();
+
     // Kill the replica
     getContext().stop(getSelf());
   }
@@ -172,8 +177,16 @@ public class Replica extends AbstractReplica {
         Heartbeat heartbeatMsg = new Heartbeat(coordinatorId);
 
         // Send heartbeat to the replica
+        // this.tell(heartbeatMsg, replica);
         replica.tell(heartbeatMsg, this.getSelf());
       }
+    }
+  }
+
+  private void cancelElectionTimeout() {
+    if (electionTimeoutTask != null) {
+      electionTimeoutTask.cancel(false);
+      electionTimeoutTask = null;
     }
   }
 
@@ -182,7 +195,6 @@ public class Replica extends AbstractReplica {
       // If the heartbeat was received, set the variable to false
       wasHeartbeatReceived = false;
     } else {
-      super.log("heartbeat not received");
       // Otherwise stop the check and start the leader election
       heartbeatReceivedStatusTask.cancel(true);
 
@@ -193,15 +205,25 @@ public class Replica extends AbstractReplica {
 
       // Await a random time before sending the election message. This can potentially
       // avoid multiple election messages
-      Random randomDelay = new Random();
-      scheduler.schedule(() -> {
-        sendElectionMsg((id + 1) % replicasGroup.size(), Optional.empty());
-      }, randomDelay.nextInt(super.getMaxLatency() + 1000),
+
+      // Before sending an election message, wait for the worst case: the node id+1
+      // already sent one. This means every node must wait
+      // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
+      // every node to process the message
+      cancelElectionTimeout();
+
+      electionTimeoutTask = scheduler.schedule(() -> {
+        if (!hasElectionStarted) {
+          sendElectionMsg((id + 1) % replicasGroup.size(), Optional.empty());
+        }
+      }, replicasGroup.size() * (super.getMaxLatency() + 100 * id + 1),
           TimeUnit.MILLISECONDS);
+
     }
   }
 
   private void sendElectionMsg(int destinationReplicaId, Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+    cancelElectionTimeout();
     if (!hasElectionStarted) {
       // Callback call (invoked when it is the first one to detect the crash)
       super.callbackOnElectionStarted(coordinatorId, null);
@@ -222,6 +244,8 @@ public class Replica extends AbstractReplica {
       final ElectionStarted msg = new ElectionStarted(id, coordinatorId, previousReplicaList);
 
       replicasGroup.get((destinationReplicaId) % replicasGroup.size()).tell(msg, this.getSelf());
+      // this.tell(msg, replicasGroup.get((destinationReplicaId) %
+      // replicasGroup.size()));
 
       // Wait MAX_LATENCY (+10 ms to count for the next replica receive function to
       // complete) before checking if ack for the election was received
@@ -234,6 +258,7 @@ public class Replica extends AbstractReplica {
   }
 
   private void sendSynchronizationMessage() {
+    cancelElectionTimeout();
     // Create synchronization message
     // TODO change with actual current transactionId
     CoordinatorElected msg = new CoordinatorElected(this.id, this.id, 0, 0);
@@ -252,6 +277,7 @@ public class Replica extends AbstractReplica {
 
     // Send message in broadcast
     for (ActorRef replica : replicas) {
+      // this.tell(msg, replica);
       replica.tell(msg, this.getSelf());
     }
 
@@ -280,11 +306,11 @@ public class Replica extends AbstractReplica {
 
       receivedPreviousReplicasMapClone = Collections.unmodifiableMap(receivedPreviousReplicasMapClone);
 
+      // super.log("sending to " + newReplicaId + " " + electionRetries);
       sendElectionMsg(newReplicaId, Optional.of(receivedPreviousReplicasMapClone));
     } else if (hasElectionStarted) {
-
       // Sending of election message successful, reset some of the election parameters
-      electionRetries = 0;
+      // super.log("success " + electionRetries);
       wasElectionAckReceived = true;
     }
   }
@@ -316,7 +342,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void onElectionStartedMsg(ElectionStarted msg) {
-
     if (!hasElectionStarted) {
       // Invoke call back since election was not started but a message was received
       super.callbackOnElectionStarted(msg.crashedCoordinatorId, null);
@@ -342,12 +367,11 @@ public class Replica extends AbstractReplica {
         return;
       }
 
-      super.log("new leader " + electedLeader);
       coordinatorId = electedLeader;
 
       // If the new coordinator is the replica itself, send a synchronization message
 
-      if (coordinatorId == this.id) {
+      if (electedLeader == this.id) {
         sendSynchronizationMessage();
         return;
       }
@@ -366,19 +390,29 @@ public class Replica extends AbstractReplica {
     ElectionAck ackMsg = new ElectionAck(id);
 
     replicasGroup.get(msg.replicaId).tell(ackMsg, this.getSelf());
+    // this.tell(ackMsg, replicasGroup.get(msg.replicaId));
   }
 
   private void onElectionAckMsg(ElectionAck msg) {
+    electionRetries = 0;
     wasElectionAckReceived = true;
   }
 
   private void onHeartbeatMsg(Heartbeat msg) {
+    if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
+      // Restart the listening if it was not active. This can happen after a leader
+      // election
+      heartbeatReceivedStatusTask = scheduler.scheduleWithFixedDelay(this::checkHeartbeatMsgStatus, 0,
+          getCoordinatorBeatInterval() + super.getMaxLatency(), TimeUnit.MILLISECONDS);
+    }
     if (msg.coordinatorId == coordinatorId) {
       wasHeartbeatReceived = true;
     }
   }
 
   private void onCoordinatorElectedMsg(CoordinatorElected msg) {
+    cancelElectionTimeout();
+
     // Set the coordinator id
     coordinatorId = msg.newCoordinatorId;
 
@@ -386,9 +420,8 @@ public class Replica extends AbstractReplica {
 
     // TODO update transactionId and transactionValue
 
-    // Restart listening for heartbeats
-    heartbeatReceivedStatusTask = scheduler.scheduleWithFixedDelay(this::checkHeartbeatMsgStatus, 0,
-        getCoordinatorBeatInterval() + super.getMaxLatency(), TimeUnit.MILLISECONDS);
+    // heartbeats listening will restart upon receiving a new heartbeat from the new
+    // leader
 
     // Reset hasElectionStarted
     hasElectionStarted = false;
