@@ -4,12 +4,14 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -125,6 +127,12 @@ public class Replica extends AbstractReplica {
           heartbeatSendTask = null;
         }
         break;
+      case Crash.Type.Now:
+        if (heartbeatSendTask != null) {
+          heartbeatSendTask.cancel(false);
+          heartbeatSendTask = null;
+        }
+        break;
       default:
         log("Crash: Invalid crash type(" + how_to_crash.type + ")");
     }
@@ -145,7 +153,6 @@ public class Replica extends AbstractReplica {
 
     if (super.id == coordinatorId) {
       // scheduleAtFixedRate schedule without waiting for the previous task to end
-      log("Setting up schedule for heartbeat");
       heartbeatSendTask = scheduler.scheduleAtFixedRate(this::sendHeartbeat, 0, super.getCoordinatorBeatInterval(),
           TimeUnit.MILLISECONDS);
     } else {
@@ -173,9 +180,9 @@ public class Replica extends AbstractReplica {
   private void checkHeartbeatMsgStatus() {
     if (wasHeartbeatReceived) {
       // If the heartbeat was received, set the variable to false
-      super.log("Heartbeat from coordinator was received");
       wasHeartbeatReceived = false;
     } else {
+      super.log("heartbeat not received");
       // Otherwise stop the check and start the leader election
       heartbeatReceivedStatusTask.cancel(true);
 
@@ -194,9 +201,9 @@ public class Replica extends AbstractReplica {
     }
   }
 
-  private void sendElectionMsg(int destionationReplcaId, Optional<List<Integer>> receivedPreviousReplicaList) {
+  private void sendElectionMsg(int destinationReplicaId, Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
     if (!hasElectionStarted) {
-      // Callback call
+      // Callback call (invoked when it is the first one to detect the crash)
       super.callbackOnElectionStarted(coordinatorId, null);
     }
     if (!hasElectionStarted || !wasElectionAckReceived) {
@@ -204,39 +211,77 @@ public class Replica extends AbstractReplica {
       hasElectionStarted = true;
 
       // Create the list of previous replicas
-      List<Integer> previousReplicaList = new ArrayList<Integer>(
-          receivedPreviousReplicaList.orElse(Collections.emptyList()));
+      Map<Integer, Integer> previousReplicaList = new HashMap<Integer, Integer>(
+          receivedPreviousReplicasMap.orElse(Collections.emptyMap()));
 
-      previousReplicaList.add(id);
+      previousReplicaList.put(id, 0); // TODO add actual current transactionID
 
-      previousReplicaList = Collections.unmodifiableList(previousReplicaList);
+      previousReplicaList = Collections.unmodifiableMap(previousReplicaList);
 
       // Create and send ElectionStarted message
-      super.log("Sending election to " + destionationReplcaId % replicasGroup.size());
       final ElectionStarted msg = new ElectionStarted(id, coordinatorId, previousReplicaList);
-      replicasGroup.get((destionationReplcaId) % replicasGroup.size()).tell(msg, this.getSelf());
+
+      replicasGroup.get((destinationReplicaId) % replicasGroup.size()).tell(msg, this.getSelf());
 
       // Wait MAX_LATENCY (+10 ms to count for the next replica receive function to
       // complete) before checking if ack for the election was received
 
       scheduler.schedule(() -> {
-        checkElectionAckReception(receivedPreviousReplicaList);
+        checkElectionAckReception(receivedPreviousReplicasMap);
       }, AbstractReplica.MAX_LATENCY + 10, TimeUnit.MILLISECONDS);
 
     }
   }
 
-  private void checkElectionAckReception(Optional<List<Integer>> receivedPreviousReplicaList) {
+  private void sendSynchronizationMessage() {
+    // Create synchronization message
+    // TODO change with actual current transactionId
+    CoordinatorElected msg = new CoordinatorElected(this.id, this.id, 0, 0);
+
+    // Create a copy of all the replicas without the current one
+    Map<Integer, ActorRef> replicasGroupClone = new HashMap<Integer, ActorRef>();
+    replicasGroupClone.putAll(replicasGroup);
+
+    replicasGroupClone.remove(this.id);
+
+    Collection<ActorRef> replicas = replicasGroupClone.values();
+
+    // Restart sending heartbeats
+    heartbeatSendTask = scheduler.scheduleAtFixedRate(this::sendHeartbeat, 0, super.getCoordinatorBeatInterval(),
+        TimeUnit.MILLISECONDS);
+
+    // Send message in broadcast
+    for (ActorRef replica : replicas) {
+      replica.tell(msg, this.getSelf());
+    }
+
+    super.callbackOnCoordinatorElected(this.id, 0, 0);
+    hasElectionStarted = false;
+    wasElectionAckReceived = false;
+    electionRetries = 0;
+  }
+
+  private void checkElectionAckReception(Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
     if (hasElectionStarted && !wasElectionAckReceived) {
       // If election was started but no ack was received, retry
       electionRetries += 1;
 
       int newReplicaId = (id + electionRetries) % replicasGroup.size();
-      super.log("Previous election message send failed. Retry with replica " + newReplicaId);
 
-      sendElectionMsg(newReplicaId, receivedPreviousReplicaList);
+      // Check if the previous replica, who failed to receive the message, was in the
+      // list. In that case, remove the replica from the message by cloning the
+      // existing map
+      Map<Integer, Integer> receivedPreviousReplicasMapClone = new HashMap<Integer, Integer>();
+
+      receivedPreviousReplicasMapClone.putAll(receivedPreviousReplicasMap.orElse(Collections.emptyMap()));
+
+      Integer replicaToBeRemovedId = (newReplicaId - 1) % replicasGroup.size();
+      receivedPreviousReplicasMapClone.remove(replicaToBeRemovedId);
+
+      receivedPreviousReplicasMapClone = Collections.unmodifiableMap(receivedPreviousReplicasMapClone);
+
+      sendElectionMsg(newReplicaId, Optional.of(receivedPreviousReplicasMapClone));
     } else if (hasElectionStarted) {
-      super.log("Election message sent successfully");
 
       // Sending of election message successful, reset some of the election parameters
       electionRetries = 0;
@@ -244,15 +289,78 @@ public class Replica extends AbstractReplica {
     }
   }
 
+  private Integer selectNewLeader(Map<Integer, Integer> replicasMap) {
+    // New leader is the one with the highest transaction identifier. In case
+    // multiple are present, the one with the highest id is selected
+
+    Set<Integer> replicasId = replicasMap.keySet();
+    Integer newLeaderId = -1;
+    Integer newLeaderTransactionId = -1;
+
+    for (Integer id : replicasId) {
+      Integer transactionId = replicasMap.get(id);
+
+      if (transactionId > newLeaderTransactionId) {
+
+        newLeaderId = id;
+        newLeaderTransactionId = transactionId;
+
+      } else if (transactionId == newLeaderTransactionId && id > newLeaderId) {
+
+        newLeaderId = id;
+
+      }
+    }
+
+    return newLeaderId;
+  }
+
   private void onElectionStartedMsg(ElectionStarted msg) {
-    super.log("received " + msg.toString());
+
+    if (!hasElectionStarted) {
+      // Invoke call back since election was not started but a message was received
+      super.callbackOnElectionStarted(msg.crashedCoordinatorId, null);
+      heartbeatReceivedStatusTask.cancel(true);
+      wasHeartbeatReceived = false;
+      electionRetries = 0;
+    }
 
     // Upon receiving an election message, resend the message to the next replica
     hasElectionStarted = true;
 
-    if (!msg.previousReplicaList.contains(id)) {
-      sendElectionMsg(id + 1, Optional.of(msg.previousReplicaList));
+    if (msg.previousReplicasMap.get(id) != null) {
+      // If the received list already has the id of this replica, the ring was
+      // complete and it's time to select the new leader.
+
+      Integer electedLeader = selectNewLeader(msg.previousReplicasMap);
+
+      // It is possible that multiple election messages are traveling: in that case,
+      // don't propagate the message if the to-be leader is the same as the one
+      // already selected
+
+      if (electedLeader == coordinatorId) {
+        return;
+      }
+
+      super.log("new leader " + electedLeader);
+      coordinatorId = electedLeader;
+
+      // If the new coordinator is the replica itself, send a synchronization message
+
+      if (coordinatorId == this.id) {
+        sendSynchronizationMessage();
+        return;
+      }
+
+      // Reset ack reception
+      wasElectionAckReceived = false;
+
     }
+
+    // After electing the new leader or have seen the election for the first time,
+    // send the message to next entity (sendElectionMsg already filters wrt replica
+    // size)
+    sendElectionMsg(id + 1, Optional.of(msg.previousReplicasMap));
 
     // Send election ack message
     ElectionAck ackMsg = new ElectionAck(id);
@@ -261,7 +369,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void onElectionAckMsg(ElectionAck msg) {
-    super.log("received ack " + msg.toString());
     wasElectionAckReceived = true;
   }
 
@@ -271,12 +378,31 @@ public class Replica extends AbstractReplica {
     }
   }
 
+  private void onCoordinatorElectedMsg(CoordinatorElected msg) {
+    // Set the coordinator id
+    coordinatorId = msg.newCoordinatorId;
+
+    super.callbackOnCoordinatorElected(coordinatorId, msg.transactionId, msg.transactionValue);
+
+    // TODO update transactionId and transactionValue
+
+    // Restart listening for heartbeats
+    heartbeatReceivedStatusTask = scheduler.scheduleWithFixedDelay(this::checkHeartbeatMsgStatus, 0,
+        getCoordinatorBeatInterval() + super.getMaxLatency(), TimeUnit.MILLISECONDS);
+
+    // Reset hasElectionStarted
+    hasElectionStarted = false;
+    wasElectionAckReceived = false;
+    electionRetries = 0;
+  }
+
   @Override
   public final Receive createReceive() {
     return createBaseReceiveBuilder()
         // Listener should be one replica and should be invoked to log
         // coordElect / write / join coordination election / crash message received
         // TODO add your message handlers here .match(, )
+        .match(CoordinatorElected.class, this::onCoordinatorElectedMsg)
         .match(ElectionStarted.class, this::onElectionStartedMsg)
         .match(ElectionAck.class, this::onElectionAckMsg)
         .match(Heartbeat.class, this::onHeartbeatMsg)

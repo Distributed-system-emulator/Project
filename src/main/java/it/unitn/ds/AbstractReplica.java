@@ -246,13 +246,20 @@ public abstract class AbstractReplica extends AbstractActor {
     }
   }
 
+  /**
+   * Synchronization message
+   */
   public static class CoordinatorElected implements Serializable {
     public final int newCoordinatorId;
     public final int replicaId;
+    public final int transactionId;
+    public final int transactionValue;
 
-    public CoordinatorElected(int newCoordinatorId, int replicaId) {
+    public CoordinatorElected(int newCoordinatorId, int replicaId, int transactionId, int transactionValue) {
       this.newCoordinatorId = newCoordinatorId;
       this.replicaId = replicaId;
+      this.transactionId = transactionId;
+      this.transactionValue = transactionValue;
     }
 
     @Override
@@ -299,12 +306,16 @@ public abstract class AbstractReplica extends AbstractActor {
   public static class ElectionStarted implements Serializable {
     public final int replicaId;
     public final int crashedCoordinatorId;
-    public final List<Integer> previousReplicaList;
+    /**
+     * Contains the list of replicas that already saw the election message along
+     * with their current transaction id
+     */
+    public final Map<Integer, Integer> previousReplicasMap;
 
-    public ElectionStarted(int replicaId, int crashedCoordinatorId, List<Integer> previousReplicaList) {
+    public ElectionStarted(int replicaId, int crashedCoordinatorId, Map<Integer, Integer> previousReplicasMap) {
       this.replicaId = replicaId;
       this.crashedCoordinatorId = crashedCoordinatorId;
-      this.previousReplicaList = previousReplicaList;
+      this.previousReplicasMap = previousReplicasMap;
     }
 
     @Override
@@ -318,7 +329,8 @@ public abstract class AbstractReplica extends AbstractActor {
 
     @Override
     public String toString() {
-      return "ElectionStarted(replica=" + replicaId + ", crashedCoord=" + crashedCoordinatorId + ")";
+      return "ElectionStarted(replica=" + replicaId + ", crashedCoord=" + crashedCoordinatorId
+          + ", currentMap=" + previousReplicasMap.toString() + ")";
     }
   }
 
@@ -377,9 +389,10 @@ public abstract class AbstractReplica extends AbstractActor {
    *
    * @param newCoordinatorId the id of the newly elected coordinator
    */
-  final void callbackOnCoordinatorElected(int newCoordinatorId) {
+  final void callbackOnCoordinatorElected(int newCoordinatorId, int transactionId, int transactionValue) {
     log("NEW COORDINATOR elected: " + newCoordinatorId);
-    listener.ifPresent(l -> l.tell(new CoordinatorElected(newCoordinatorId, this.id), getSelf()));
+    listener.ifPresent(
+        l -> l.tell(new CoordinatorElected(newCoordinatorId, this.id, transactionId, transactionValue), getSelf()));
   }
 
   /**
@@ -401,9 +414,9 @@ public abstract class AbstractReplica extends AbstractActor {
    * @param crashedCoordinatorId the id of the coordinator whose crash triggered
    *                             this election
    */
-  final void callbackOnElectionStarted(int crashedCoordinatorId, List previousReplicaList) {
+  final void callbackOnElectionStarted(int crashedCoordinatorId, Map previousReplicasMap) {
     log("ELECTION STARTED for crashed coordinator: " + crashedCoordinatorId);
-    listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId, previousReplicaList), getSelf()));
+    listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId, previousReplicasMap), getSelf()));
   }
 
   // =================================================================================
