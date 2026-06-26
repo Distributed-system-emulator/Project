@@ -9,6 +9,9 @@ import java.util.Optional;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.japi.pf.ReceiveBuilder;
+import it.unitn.ds.AbstractReplica.CoordinatorElected;
+import it.unitn.ds.AbstractReplica.ElectionStarted;
+import it.unitn.ds.AbstractReplica.UpdateApplied;
 
 public abstract class AbstractReplica extends AbstractActor {
   // === Constants ===
@@ -245,7 +248,32 @@ public abstract class AbstractReplica extends AbstractActor {
     }
   }
 
+  /**
+   * Scheduler messages
+   */
+
   public static class SendHeartbeat implements java.io.Serializable {
+  }
+
+  public static class CheckHeartbeatMsgStatus implements java.io.Serializable {
+  }
+
+  public static class CheckElectionAckReception implements java.io.Serializable {
+    public Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
+
+    CheckElectionAckReception(Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+      this.receivedPreviousReplicasMap = receivedPreviousReplicasMap;
+    }
+  }
+
+  public static class SendElectionMsg implements java.io.Serializable {
+    public int destinationReplicaId;
+    public Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
+
+    SendElectionMsg(int destinationReplicaId, Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+      this.destinationReplicaId = destinationReplicaId;
+      this.receivedPreviousReplicasMap = receivedPreviousReplicasMap;
+    }
   }
 
   /**
