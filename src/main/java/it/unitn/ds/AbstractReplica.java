@@ -9,9 +9,6 @@ import java.util.Optional;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.japi.pf.ReceiveBuilder;
-import it.unitn.ds.AbstractReplica.CoordinatorElected;
-import it.unitn.ds.AbstractReplica.ElectionStarted;
-import it.unitn.ds.AbstractReplica.UpdateApplied;
 
 public abstract class AbstractReplica extends AbstractActor {
   // === Constants ===
