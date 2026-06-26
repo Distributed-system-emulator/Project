@@ -21,9 +21,9 @@ public class Main {
     System.out.println("START");
     System.out.println("========================================\n");
 
-    final int N_REPLICAS = 5;
+    final int N_REPLICAS = 7;
     final int N_CLIENTS = 4;
-    final int COORDINATOR_ID = 0;
+    final int COORDINATOR_ID = 1;
     final ActorSystem system = ActorSystem.create("TestMain");
 
     Logger.setDestinationStdout();
@@ -90,13 +90,13 @@ public class Main {
 
     // Schedule a crash of the coordinator after 1000 ms
 
-    final Crash crashMsg = new Crash(Crash.Type.Now, 0);
-    final Map<Integer, ActorRef> rg = replicasGroup;
-    Executors.newSingleThreadScheduledExecutor().schedule(() -> {
-      rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
-    }, 1000, TimeUnit.MILLISECONDS);
-
     /*
+     * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
+     * final Map<Integer, ActorRef> rg = replicasGroup;
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
+     * }, 1000, TimeUnit.MILLISECONDS);
+     * 
      * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(6).tell(crashMsg, Actor.noSender());
      * }, 5000, TimeUnit.MILLISECONDS);

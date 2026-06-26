@@ -38,6 +38,12 @@ public class Replica extends AbstractReplica {
   private Cancellable heartbeatReceivedStatusTask;
 
   /**
+   * This attribute will have the scheduled task for checking whether the
+   * heartbeat listening was restarted
+   */
+  private Cancellable heartbeatListeningStatusTask;
+
+  /**
    * This attribute is check every
    * {@link coordinatorBeatInterval}+{@link maxLatency} to see whether an
    * heartbeat was received from the coordinator
@@ -82,6 +88,7 @@ public class Replica extends AbstractReplica {
 
     replicasGroup = new HashMap<Integer, ActorRef>();
     heartbeatSendTask = null;
+    heartbeatListeningStatusTask = null;
     hasElectionStarted = false;
     electionRetries = 0;
     receivedElectionAckMap = new HashMap<Integer, Integer>();
@@ -155,6 +162,16 @@ public class Replica extends AbstractReplica {
           getContext().dispatcher(),
           getSelf());
 
+    } else {
+      // If the current replica is not the coordinator, normally it starts to listen
+      // to heartbeat after receiving the first one. Wait 2 seconds and check if the
+      // listening was started, otherwise start it anyway
+      heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
+          Duration.create(2000, TimeUnit.MILLISECONDS),
+          getSelf(),
+          new CheckHeartbeatListeningStatus(),
+          getContext().getSystem().dispatcher(),
+          getSelf());
     }
   }
 
@@ -217,6 +234,11 @@ public class Replica extends AbstractReplica {
     if (!hasElectionStarted || (wasElectionAckReceived(originalReplicaId) == 0)) {
       // Set the election start to true
       hasElectionStarted = true;
+
+      // Block the heartbeat listening task check: an election is ongoing
+      if (heartbeatListeningStatusTask != null && !heartbeatListeningStatusTask.isCancelled()) {
+        heartbeatListeningStatusTask.cancel();
+      }
 
       // Create the list of previous replicas
       Map<Integer, Integer> previousReplicaList = new HashMap<Integer, Integer>(
@@ -380,6 +402,19 @@ public class Replica extends AbstractReplica {
     return newLeaderId;
   }
 
+  private void checkHeartbeatListeningStatus(CheckHeartbeatListeningStatus msg) {
+    if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
+      heartbeatReceivedStatusTask = getContext().system().scheduler().scheduleWithFixedDelay(
+          Duration.Zero(),
+          Duration.create(super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(),
+              TimeUnit.MILLISECONDS),
+          getSelf(),
+          new CheckHeartbeatMsgStatus(),
+          getContext().dispatcher(),
+          getSelf());
+    }
+  }
+
   private void onElectionStartedMsg(ElectionStarted msg) {
 
     // Send election ack message
@@ -469,7 +504,14 @@ public class Replica extends AbstractReplica {
     // TODO update transactionId and transactionValue
 
     // heartbeats listening will restart upon receiving a new heartbeat from the new
-    // leader
+    // leader, however the new coordinator can shutdown before being able to send
+    // the message, therefore, check if the task was started after 2 seconds
+    heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
+        Duration.create(2000, TimeUnit.MILLISECONDS),
+        getSelf(),
+        new CheckHeartbeatListeningStatus(),
+        getContext().getSystem().dispatcher(),
+        getSelf());
 
     // Reset for next election
     hasElectionStarted = false;
@@ -483,6 +525,7 @@ public class Replica extends AbstractReplica {
         // Listener should be one replica and should be invoked to log
         // coordElect / write / join coordination election / crash message received
         // TODO add your message handlers here .match(, )
+        .match(CheckHeartbeatListeningStatus.class, this::checkHeartbeatListeningStatus)
         .match(SendElectionMsg.class, this::sendElectionMsg)
         .match(CheckElectionAckReception.class, this::checkElectionAckReception)
         .match(CheckHeartbeatMsgStatus.class, this::checkHeartbeatMsgStatus)

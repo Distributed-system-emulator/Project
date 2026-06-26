@@ -255,6 +255,9 @@ public abstract class AbstractReplica extends AbstractActor {
   public static class CheckHeartbeatMsgStatus implements java.io.Serializable {
   }
 
+  public static class CheckHeartbeatListeningStatus implements java.io.Serializable {
+  }
+
   public static class CheckElectionAckReception implements java.io.Serializable {
     public final int originalReplicaId;
     public final int previousAckCounter;
