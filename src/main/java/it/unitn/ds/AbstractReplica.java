@@ -256,18 +256,26 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class CheckElectionAckReception implements java.io.Serializable {
-    public Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
+    public final int originalReplicaId;
+    public final int previousAckCounter;
+    public final Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
 
-    CheckElectionAckReception(Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+    CheckElectionAckReception(int originalReplicaId, int previousAckCounter,
+        Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+      this.originalReplicaId = originalReplicaId;
+      this.previousAckCounter = previousAckCounter;
       this.receivedPreviousReplicasMap = receivedPreviousReplicasMap;
     }
   }
 
   public static class SendElectionMsg implements java.io.Serializable {
-    public int destinationReplicaId;
-    public Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
+    public final int originalReplicaId;
+    public final int destinationReplicaId;
+    public final Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
 
-    SendElectionMsg(int destinationReplicaId, Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+    SendElectionMsg(int originalReplicaId, int destinationReplicaId,
+        Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+      this.originalReplicaId = originalReplicaId;
       this.destinationReplicaId = destinationReplicaId;
       this.receivedPreviousReplicasMap = receivedPreviousReplicasMap;
     }
@@ -293,7 +301,8 @@ public abstract class AbstractReplica extends AbstractActor {
     public boolean equals(Object obj) {
       if (obj instanceof CoordinatorElected) {
         CoordinatorElected o = (CoordinatorElected) obj;
-        return o.newCoordinatorId == this.newCoordinatorId && o.replicaId == this.replicaId;
+        return o.newCoordinatorId == this.newCoordinatorId && o.replicaId == this.replicaId
+            && this.transactionId == o.transactionId && this.transactionValue == o.transactionValue;
       }
       return false;
     }
@@ -331,7 +340,18 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class ElectionStarted implements Serializable {
+    /**
+     * This attribute represents the sender of an ElectionStarted message. Notice
+     * that the election message circulate over the ring, therefore, this field
+     * could not match with the original sender
+     */
     public final int replicaId;
+    /**
+     * This attribute contains who originally generated the election message. It is
+     * useful to differentiate between two different election messages that are part
+     * of the same election
+     */
+    public final int originalReplicaId;
     public final int crashedCoordinatorId;
     /**
      * Contains the list of replicas that already saw the election message along
@@ -339,7 +359,9 @@ public abstract class AbstractReplica extends AbstractActor {
      */
     public final Map<Integer, Integer> previousReplicasMap;
 
-    public ElectionStarted(int replicaId, int crashedCoordinatorId, Map<Integer, Integer> previousReplicasMap) {
+    public ElectionStarted(int originalReplicaId, int replicaId, int crashedCoordinatorId,
+        Map<Integer, Integer> previousReplicasMap) {
+      this.originalReplicaId = originalReplicaId;
       this.replicaId = replicaId;
       this.crashedCoordinatorId = crashedCoordinatorId;
       this.previousReplicasMap = previousReplicasMap;
@@ -349,14 +371,16 @@ public abstract class AbstractReplica extends AbstractActor {
     public boolean equals(Object obj) {
       if (obj instanceof ElectionStarted) {
         ElectionStarted o = (ElectionStarted) obj;
-        return o.replicaId == this.replicaId && o.crashedCoordinatorId == this.crashedCoordinatorId;
+        return o.replicaId == this.replicaId && o.crashedCoordinatorId == this.crashedCoordinatorId
+            && o.originalReplicaId == this.originalReplicaId && this.previousReplicasMap.equals(o.previousReplicasMap);
       }
       return false;
     }
 
     @Override
     public String toString() {
-      return "ElectionStarted(replica=" + replicaId + ", crashedCoord=" + crashedCoordinatorId
+      return "ElectionStarted(originalReplicaId=" + originalReplicaId + ", replica=" + replicaId + ", crashedCoord="
+          + crashedCoordinatorId
           + ", currentMap=" + previousReplicasMap.toString() + ")";
     }
   }
@@ -383,23 +407,26 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class ElectionAck implements Serializable {
+    public final int originalReplicaId;
     public final int recipientReplicaId;
 
-    ElectionAck(int recipientReplicaId) {
+    ElectionAck(int originalReplicaId, int recipientReplicaId) {
+      this.originalReplicaId = originalReplicaId;
       this.recipientReplicaId = recipientReplicaId;
     }
 
     @Override
     public boolean equals(Object obj) {
       if (obj instanceof ElectionAck) {
-        return ((ElectionAck) obj).recipientReplicaId == this.recipientReplicaId;
+        return ((ElectionAck) obj).recipientReplicaId == this.recipientReplicaId
+            && ((ElectionAck) obj).originalReplicaId == this.originalReplicaId;
       }
       return false;
     }
 
     @Override
     public String toString() {
-      return "ElectionAck(recipientReplica=" + recipientReplicaId + ")";
+      return "ElectionAck(recipientReplica=" + recipientReplicaId + ", originalReplicaId=" + originalReplicaId + ")";
     }
   }
 
@@ -441,9 +468,11 @@ public abstract class AbstractReplica extends AbstractActor {
    * @param crashedCoordinatorId the id of the coordinator whose crash triggered
    *                             this election
    */
-  final void callbackOnElectionStarted(int crashedCoordinatorId, Map<Integer, Integer> previousReplicasMap) {
+  final void callbackOnElectionStarted(int crashedCoordinatorId, int originalReplicaId,
+      Map<Integer, Integer> previousReplicasMap) {
     log("ELECTION STARTED for crashed coordinator: " + crashedCoordinatorId);
-    listener.ifPresent(l -> l.tell(new ElectionStarted(this.id, crashedCoordinatorId, previousReplicasMap), getSelf()));
+    listener.ifPresent(l -> l
+        .tell(new ElectionStarted(this.id, originalReplicaId, crashedCoordinatorId, previousReplicasMap), getSelf()));
   }
 
   // =================================================================================
