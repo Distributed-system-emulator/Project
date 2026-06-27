@@ -88,8 +88,7 @@ public class Main {
 
     // TODO: Implement your main logic
 
-    // Schedule a crash of the coordinator after 1000 ms
-
+    // Crash multiple coordinator one after another
     /*
      * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
      * final Map<Integer, ActorRef> rg = replicasGroup;
@@ -99,11 +98,35 @@ public class Main {
      * 
      * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(6).tell(crashMsg, Actor.noSender());
-     * }, 5000, TimeUnit.MILLISECONDS);
+     * }, 7000, TimeUnit.MILLISECONDS);
      * 
      * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(5).tell(crashMsg, Actor.noSender());
      * }, 15000, TimeUnit.MILLISECONDS);
+     */
+
+    /*
+     * // Crash before synchronization: add the following code on
+     * sendSynchronization message
+     * 
+     * if (this.id == 6) {
+     * super.log("killed 6");
+     * getContext().stop(getSelf());
+     * return;
+     * }
+     * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
+     * final Map<Integer, ActorRef> rg = replicasGroup;
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
+     * }, 1000, TimeUnit.MILLISECONDS);
+     * 
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(5).tell(crashMsg, Actor.noSender());
+     * }, 15000, TimeUnit.MILLISECONDS);
+     * 
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(4).tell(crashMsg, Actor.noSender());
+     * }, 25000, TimeUnit.MILLISECONDS);
      */
 
     /*

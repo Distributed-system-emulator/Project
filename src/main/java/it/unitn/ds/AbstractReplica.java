@@ -16,6 +16,8 @@ public abstract class AbstractReplica extends AbstractActor {
   public static final int MAX_LATENCY = 20;
   public static final int COORDINATOR_BEAT_INTERVAL = 1000;
   public static final int POSITIONS_LIST_LENGTH = 100;
+  public static final int HEARTBEAT_STATUS_CHECK_WAIT_TIME = 2000;
+  public static final int SYNC_MESSAGE_WAIT_TIME = 2000;
 
   // === Local Data ===
   final int id;
@@ -26,18 +28,24 @@ public abstract class AbstractReplica extends AbstractActor {
   private int minLatency;
   private int maxLatency;
   private int coordinatorBeatInterval;
+  private int heartbeatStatusCheckWaitTime;
+  private int syncMessageWaitTime;
   private final Map<ActorRef, ActorRef> channels = new HashMap<>();
 
   // === Tests ===
   private final Optional<ActorRef> listener;
 
   AbstractReplica(int id) {
-    this(id, MIN_LATENCY, MAX_LATENCY, COORDINATOR_BEAT_INTERVAL, Optional.empty());
+    this(id, MIN_LATENCY, MAX_LATENCY, COORDINATOR_BEAT_INTERVAL, HEARTBEAT_STATUS_CHECK_WAIT_TIME,
+        SYNC_MESSAGE_WAIT_TIME, Optional.empty());
   }
 
-  AbstractReplica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval, Optional<ActorRef> listener) {
+  AbstractReplica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval, int heartbeatStatusCheckWaitTime,
+      int syncMessageWaitTime, Optional<ActorRef> listener) {
     this.id = id;
     this.coordinatorBeatInterval = coordinatorBeatInterval;
+    this.heartbeatStatusCheckWaitTime = heartbeatStatusCheckWaitTime;
+    this.syncMessageWaitTime = syncMessageWaitTime;
     this.listener = listener;
     setNetworkLatency(minLatency, maxLatency);
   }
@@ -78,6 +86,24 @@ public abstract class AbstractReplica extends AbstractActor {
    */
   public int getMaxLatency() {
     return maxLatency;
+  }
+
+  /**
+   * 
+   * @return How much time the replica wait before checking whether the heartbeat
+   *         listening process started after an election
+   */
+  public int getHeartbeatStatusCheckWaitTime() {
+    return heartbeatStatusCheckWaitTime;
+  }
+
+  /**
+   * 
+   * @return how much ms the replicas wait before waiting for the synchronization
+   *         message
+   */
+  public int getSyncMessageWaitTime() {
+    return syncMessageWaitTime;
   }
 
   /**
@@ -256,6 +282,9 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class CheckHeartbeatListeningStatus implements java.io.Serializable {
+  }
+
+  public static class CheckSynchronizationMsg implements java.io.Serializable {
   }
 
   public static class CheckElectionAckReception implements java.io.Serializable {
