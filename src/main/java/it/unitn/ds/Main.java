@@ -84,9 +84,12 @@ public class Main {
      */
 
     // Make shared state immutable
+
+    clientsGroup = Collections.unmodifiableList(clientsGroup);
+
+    // MANUAL TEST
+
     /*
-     * clientsGroup = Collections.unmodifiableList(clientsGroup);
-     * 
      * clientsGroup.get(0).tell(new AbstractClient.WriteRequest(0, 10),
      * Actor.noSender());
      * 
