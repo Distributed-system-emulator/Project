@@ -192,7 +192,7 @@ public class Replica extends AbstractReplica {
     this.pendingAcks = new ArrayList<Integer>();
 
     this.database = new HashMap<Integer, Integer>();
-    this.database.put(0, 10);
+    this.database.put(0, 0);
 
     this.heartbeatSendTask = null;
     this.heartbeatListeningStatusTask = null;
