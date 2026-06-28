@@ -89,6 +89,7 @@ public class Main {
     // TODO: Implement your main logic
 
     // Crash multiple coordinator one after another
+
     /*
      * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
      * final Map<Integer, ActorRef> rg = replicasGroup;
@@ -96,7 +97,7 @@ public class Main {
      * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
      * }, 1000, TimeUnit.MILLISECONDS);
      * 
-     * /* Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(6).tell(crashMsg, Actor.noSender());
      * }, 7000, TimeUnit.MILLISECONDS);
      * 
@@ -109,8 +110,14 @@ public class Main {
     // sendSynchronization message
 
     /*
+     * final Crash crashMsgSync = new Crash(Crash.Type.ElectionSync, 0);
      * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
      * final Map<Integer, ActorRef> rg = replicasGroup;
+     * 
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(6).tell(crashMsgSync, Actor.noSender());
+     * }, 1000, TimeUnit.MILLISECONDS);
+     * 
      * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
      * }, 1000, TimeUnit.MILLISECONDS);

@@ -7,7 +7,6 @@ import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -152,6 +151,8 @@ public class Replica extends AbstractReplica {
    */
   private Map<Integer, Integer> database;
 
+  private Crash crashMessage;
+
   // === CONSTRUCTORS ===
 
   public Replica(int id) {
@@ -189,6 +190,8 @@ public class Replica extends AbstractReplica {
     this.electionRetries = 0;
     this.receivedElectionAckMap = new HashMap<Integer, Integer>();
     this.coordinatorSubstitutionMap = new HashMap<Integer, Integer>();
+
+    this.crashMessage = null;
   }
 
   // === PROPS ===
@@ -230,7 +233,7 @@ public class Replica extends AbstractReplica {
   }
 
   private void broadcast(Serializable message, boolean includeMyself, boolean setTimeout) {
-    for (int i = 0; i < this.replicasGroup.size(); i++) {
+    for (int i = 0; i < getSystemNumberOfActors(); i++) {
       if (i == id) {
         if (includeMyself) {
           // If requested to send to myself too, use Akka .tell() function without delays
@@ -256,12 +259,23 @@ public class Replica extends AbstractReplica {
     }
   }
 
-  private void scheduleMessage(Serializable message, int delay, ActorRef dst) {
-    getContext().system().scheduler().scheduleOnce(
+  private Cancellable scheduleMessage(Serializable message, int delay, ActorRef dst) {
+    return getContext().system().scheduler().scheduleOnce(
         Duration.create(delay, TimeUnit.MILLISECONDS),
         dst,
         message,
         getContext().system().dispatcher(),
+        getSelf());
+  }
+
+  private Cancellable scheduleMessage(Serializable message, int initialDelay, int repetitionDelay, ActorRef dst) {
+    return getContext().system().scheduler().scheduleWithFixedDelay(
+        Duration.create(initialDelay, TimeUnit.MILLISECONDS),
+        Duration.create(repetitionDelay,
+            TimeUnit.MILLISECONDS),
+        dst,
+        message,
+        getContext().dispatcher(),
         getSelf());
   }
 
@@ -289,27 +303,43 @@ public class Replica extends AbstractReplica {
   public void crash(AbstractReplica.Crash how_to_crash) {
     log("MAIN HANDLER CRASH: " + how_to_crash.type + " (" + how_to_crash.after_n_messages_of_type + ")");
 
-    switch (how_to_crash.type) {
-      case Crash.Type.Heartbeat:
-        // If the the heartbeatSendTask was present, wait for its completion and cancel
-        // TODO change wrt the description
-        if (heartbeatSendTask != null) {
-          heartbeatSendTask.cancel();
-          heartbeatSendTask = null;
-        }
-        break;
-      case Crash.Type.Now:
-        if (heartbeatSendTask != null) {
-          heartbeatSendTask.cancel();
-          heartbeatSendTask = null;
-        }
-        break;
-      default:
-        log("Crash: Invalid crash type(" + how_to_crash.type + ")");
+    if (how_to_crash.type == Crash.Type.Now) {
+      crashNow();
+      return;
+    }
+
+    crashMessage = how_to_crash;
+
+  }
+
+  private void crashNow() {
+    if (heartbeatSendTask != null && !heartbeatSendTask.isCancelled()) {
+      heartbeatSendTask.cancel();
+    }
+    if (heartbeatReceivedStatusTask != null && !heartbeatReceivedStatusTask.isCancelled()) {
+      heartbeatReceivedStatusTask.cancel();
+    }
+    if (checkSynchronizationMsgTask != null && !checkSynchronizationMsgTask.isCancelled()) {
+      checkSynchronizationMsgTask.cancel();
+    }
+    if (heartbeatListeningStatusTask != null && !heartbeatListeningStatusTask.isCancelled()) {
+      heartbeatListeningStatusTask.cancel();
     }
 
     // Kill the replica
     getContext().stop(getSelf());
+  }
+
+  private boolean willReplicaCrash() {
+    if (crashMessage != null) {
+      if (crashMessage.after_n_messages_of_type == 0) {
+        return true;
+      }
+
+      crashMessage = new Crash(crashMessage.type, crashMessage.after_n_messages_of_type - 1);
+      return false;
+    }
+    return false;
   }
 
   @Override
@@ -338,13 +368,9 @@ public class Replica extends AbstractReplica {
       // If the current replica is not the coordinator, normally it starts to listen
       // to heartbeat after receiving the first one. Wait 2 seconds and check if the
       // listening was started, otherwise start it anyway
-      heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
-          Duration.create(
-              getHeartbeatStatusCheckWaitTime(), TimeUnit.MILLISECONDS),
-          getSelf(),
-          new CheckHeartbeatListeningStatus(),
-          getContext().getSystem().dispatcher(),
-          getSelf());
+
+      heartbeatListeningStatusTask = scheduleMessage(new CheckHeartbeatListeningStatus(),
+          getHeartbeatStatusCheckWaitTime(), getSelf());
     }
   }
 
@@ -361,6 +387,14 @@ public class Replica extends AbstractReplica {
   }
 
   private void checkHeartbeatMsgStatus(CheckHeartbeatMsgStatus msg) {
+
+    if (crashMessage != null && crashMessage.type == Crash.Type.Heartbeat) {
+      if (willReplicaCrash()) {
+        crashNow();
+        return;
+      }
+    }
+
     if (wasHeartbeatReceived) {
       // If the heartbeat was received, set the variable to false
       wasHeartbeatReceived = false;
@@ -378,15 +412,8 @@ public class Replica extends AbstractReplica {
       // This means every node must wait
       // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
       // every node to process the message
-
-      getContext().system().scheduler()
-          .scheduleOnce(
-              Duration.create(replicasGroup.size() * (getMaxLatency() + 100), TimeUnit.MILLISECONDS),
-              getSelf(),
-              new SendElectionMsg(this.id, (id + 1) % replicasGroup.size(), Optional.empty()),
-              getContext().getSystem().dispatcher(),
-              getSelf());
-
+      scheduleMessage(new SendElectionMsg(this.id, (id + 1) % getSystemNumberOfActors(), Optional.empty()),
+          getSystemNumberOfActors() * (getMaxLatency() + 100), getSelf());
     }
   }
 
@@ -428,20 +455,13 @@ public class Replica extends AbstractReplica {
 
       receivedElectionAckMap.put(originalReplicaId, 0);
 
-      this.tell(msg, replicasGroup.get((destinationReplicaId) % replicasGroup.size()));
+      this.tell(msg, replicasGroup.get((destinationReplicaId) % getSystemNumberOfActors()));
 
       // Wait MAX_LATENCY*2 (round trip time) before checking if
       // ack for the election was received. Since every node may be buffering other
       // messages, 100 ms are added for every node
-
-      getContext().system().scheduler()
-          .scheduleOnce(
-              Duration.create(this.getMaxLatency() * 2 + 100 * replicasGroup.size(), TimeUnit.MILLISECONDS),
-              getSelf(),
-              new CheckElectionAckReception(originalReplicaId, wasElectionAckReceived(originalReplicaId),
-                  receivedPreviousReplicasMap),
-              getContext().getSystem().dispatcher(),
-              getSelf());
+      scheduleMessage(new CheckElectionAckReception(originalReplicaId, wasElectionAckReceived(originalReplicaId),
+          receivedPreviousReplicasMap), this.getMaxLatency() * 2 + 100 * getSystemNumberOfActors(), getSelf());
 
     }
   }
@@ -459,10 +479,11 @@ public class Replica extends AbstractReplica {
 
   private void sendSynchronizationMessage() {
 
-    if (this.id == 6) {
-      super.log("killed 6");
-      getContext().stop(getSelf());
-      return;
+    if (crashMessage != null && crashMessage.type == Crash.Type.ElectionSync) {
+      if (willReplicaCrash()) {
+        crashNow();
+        return;
+      }
     }
 
     coordinatorSubstitutionMap.put(coordinatorId, this.id);
@@ -517,7 +538,7 @@ public class Replica extends AbstractReplica {
       // If election was started but no ack was received, retry
       electionRetries += 1;
 
-      int newReplicaId = (id + electionRetries) % replicasGroup.size();
+      int newReplicaId = (id + electionRetries) % getSystemNumberOfActors();
 
       // Check if the previous replica, who failed to receive the message, was in the
       // list. In that case, remove the replica from the message by cloning the
@@ -528,7 +549,7 @@ public class Replica extends AbstractReplica {
       receivedPreviousReplicasMapClone.putAll(receivedPreviousReplicasMap.orElse(
           Collections.emptyMap()));
 
-      Integer replicaToBeRemovedId = (newReplicaId - 1) % replicasGroup.size();
+      Integer replicaToBeRemovedId = (newReplicaId - 1) % getSystemNumberOfActors();
       receivedPreviousReplicasMapClone.remove(replicaToBeRemovedId);
 
       receivedPreviousReplicasMapClone = Collections.unmodifiableMap(receivedPreviousReplicasMapClone);
@@ -562,12 +583,8 @@ public class Replica extends AbstractReplica {
       electionRetries = 0;
       hasElectionStarted = false;
 
-      heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
-          Duration.create(super.getHeartbeatStatusCheckWaitTime(), TimeUnit.MILLISECONDS),
-          getSelf(),
-          new CheckHeartbeatListeningStatus(),
-          getContext().getSystem().dispatcher(),
-          getSelf());
+      heartbeatListeningStatusTask = scheduleMessage(new CheckHeartbeatListeningStatus(),
+          getHeartbeatStatusCheckWaitTime(), getSelf());
     }
   }
 
@@ -599,18 +616,19 @@ public class Replica extends AbstractReplica {
 
   private void checkHeartbeatListeningStatus(CheckHeartbeatListeningStatus msg) {
     if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
-      heartbeatReceivedStatusTask = getContext().system().scheduler().scheduleWithFixedDelay(
-          Duration.Zero(),
-          Duration.create(super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(),
-              TimeUnit.MILLISECONDS),
-          getSelf(),
-          new CheckHeartbeatMsgStatus(),
-          getContext().dispatcher(),
-          getSelf());
+      heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
+          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf());
     }
   }
 
   private void onElectionStartedMsg(ElectionStarted msg) {
+
+    if (crashMessage != null && crashMessage.type == Crash.Type.Election) {
+      if (willReplicaCrash()) {
+        crashNow();
+        return;
+      }
+    }
 
     // Send election ack message
     ElectionAck ackMsg = new ElectionAck(msg.originalReplicaId, id);
@@ -665,13 +683,9 @@ public class Replica extends AbstractReplica {
         // not, that means the to-be coordinator received the election message for the
         // second time but crashed before being able to send at least one
         // synchronization message)
-        checkSynchronizationMsgTask = getContext().system().scheduler()
-            .scheduleOnce(
-                Duration.create(super.getSyncMessageWaitTime(), TimeUnit.MILLISECONDS),
-                getSelf(),
-                new CheckSynchronizationMsg(),
-                getContext().getSystem().dispatcher(),
-                getSelf());
+        checkSynchronizationMsgTask = scheduleMessage(new CheckSynchronizationMsg(), getSyncMessageWaitTime(),
+            getSelf());
+
       }
 
     }
@@ -697,14 +711,8 @@ public class Replica extends AbstractReplica {
     if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
       // Restart the listening if it was not active. This can happen after a leader
       // election
-      heartbeatReceivedStatusTask = getContext().system().scheduler().scheduleWithFixedDelay(
-          Duration.Zero(),
-          Duration.create(super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(),
-              TimeUnit.MILLISECONDS),
-          getSelf(),
-          new CheckHeartbeatMsgStatus(),
-          getContext().dispatcher(),
-          getSelf());
+      heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
+          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf());
     }
   }
 
@@ -727,12 +735,8 @@ public class Replica extends AbstractReplica {
     // heartbeats listening will restart upon receiving a new heartbeat from the new
     // leader, however the new coordinator can shutdown before being able to send
     // the message, therefore, check if the task was started after 2 seconds
-    heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
-        Duration.create(super.getHeartbeatStatusCheckWaitTime(), TimeUnit.MILLISECONDS),
-        getSelf(),
-        new CheckHeartbeatListeningStatus(),
-        getContext().getSystem().dispatcher(),
-        getSelf());
+    heartbeatListeningStatusTask = scheduleMessage(new CheckHeartbeatListeningStatus(),
+        getHeartbeatStatusCheckWaitTime(), getSelf());
 
     // Reset for next election
     hasElectionStarted = false;

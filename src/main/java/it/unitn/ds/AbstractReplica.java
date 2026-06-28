@@ -218,7 +218,12 @@ public abstract class AbstractReplica extends AbstractActor {
       /**
        * Crash after processing election-related messages.
        */
-      Election
+      Election,
+
+      /**
+       * Crash before sending the synchronization message during an election
+       */
+      ElectionSync,
     }
 
     /**
