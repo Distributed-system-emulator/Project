@@ -61,13 +61,13 @@ public class Client extends AbstractClient {
   public void onReadTimeout(ReadTimeout timeout) {
     // TODO: check if the relative request is already received
 
-    callbackOnReadTimeout(timeout);
+    // callbackOnReadTimeout(timeout);
   }
 
   public void onWriteTimeout(WriteTimeout timeout) {
     // TODO: check if the relative request is already received
 
-    callbackOnWriteTimeout(timeout);
+    // callbackOnWriteTimeout(timeout);
   }
 
   @Override

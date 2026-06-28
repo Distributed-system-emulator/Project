@@ -324,14 +324,14 @@ public abstract class AbstractReplica extends AbstractActor {
   public static class CoordinatorElected implements Serializable {
     public final int newCoordinatorId;
     public final int replicaId;
-    public final int transactionId;
-    public final int transactionValue;
+    public final int dbId;
+    public final int dbValue;
 
-    public CoordinatorElected(int newCoordinatorId, int replicaId, int transactionId, int transactionValue) {
+    public CoordinatorElected(int newCoordinatorId, int replicaId, int dbId, int dbValue) {
       this.newCoordinatorId = newCoordinatorId;
       this.replicaId = replicaId;
-      this.transactionId = transactionId;
-      this.transactionValue = transactionValue;
+      this.dbId = dbId;
+      this.dbValue = dbValue;
     }
 
     @Override
@@ -339,7 +339,7 @@ public abstract class AbstractReplica extends AbstractActor {
       if (obj instanceof CoordinatorElected) {
         CoordinatorElected o = (CoordinatorElected) obj;
         return o.newCoordinatorId == this.newCoordinatorId && o.replicaId == this.replicaId
-            && this.transactionId == o.transactionId && this.transactionValue == o.transactionValue;
+            && this.dbId == o.dbId && this.dbValue == o.dbValue;
       }
       return false;
     }

@@ -84,9 +84,20 @@ public class Main {
      */
 
     // Make shared state immutable
-    clientsGroup = Collections.unmodifiableList(clientsGroup);
-
-    // TODO: Implement your main logic
+    /*
+     * clientsGroup = Collections.unmodifiableList(clientsGroup);
+     * 
+     * clientsGroup.get(0).tell(new AbstractClient.WriteRequest(0, 10),
+     * Actor.noSender());
+     * 
+     * try {
+     * Thread.sleep(6 * AbstractReplica.MAX_LATENCY + 200);
+     * clientsGroup.get(0).tell(new AbstractClient.ReadRequest(0),
+     * Actor.noSender());
+     * } catch (InterruptedException e) {
+     * 
+     * }
+     */
 
     // Crash multiple coordinator one after another
 

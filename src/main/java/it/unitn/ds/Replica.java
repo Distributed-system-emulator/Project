@@ -92,6 +92,12 @@ public class Replica extends AbstractReplica {
    */
   private Map<Integer, Integer> receivedElectionAckMap;
 
+  /**
+   * For every newly elected coordinator, the map register what was the previous
+   * coordinator that is now substituted by the new one. The map avoids to restart
+   * an election upon electing a new leader because of election messages that are
+   * still circulating
+   */
   private Map<Integer, Integer> coordinatorSubstitutionMap;
 
   /**
@@ -113,10 +119,11 @@ public class Replica extends AbstractReplica {
    * Queue of write requests received by the coordinator.
    */
   private Queue<WriteRequestToCoordinator> writeRequestsQueue;
+
   /**
    * Whether the coordinator is processing a write.
    */
-  private boolean writeInProgress = false;
+  private boolean writeInProgress;
 
   /**
    * (client, write request) pair record.
@@ -136,21 +143,26 @@ public class Replica extends AbstractReplica {
    * List of replica IDs that did not sent the write notification ACK yet.
    */
   private List<Integer> pendingAcks;
+
   /**
    * The round of ACKs.
    */
   private long acksRound = 0;
 
   /**
-   * Timestamp of the last write.
+   * The id of the latest write for which a writeOK was received
    */
-  // private long ts = 0;
+  private Integer latestProcessedWriteId;
 
   /**
    * Database of (person index, location) pairs.
    */
   private Map<Integer, Integer> database;
 
+  /**
+   * Crash message, if received, updated with the analyzed number of messages of a
+   * certain type
+   */
   private Crash crashMessage;
 
   // === CONSTRUCTORS ===
@@ -182,7 +194,6 @@ public class Replica extends AbstractReplica {
     this.database = new HashMap<Integer, Integer>();
     this.database.put(0, 10);
 
-    this.replicasGroup = new HashMap<Integer, ActorRef>();
     this.heartbeatSendTask = null;
     this.heartbeatListeningStatusTask = null;
     this.checkSynchronizationMsgTask = null;
@@ -192,6 +203,11 @@ public class Replica extends AbstractReplica {
     this.coordinatorSubstitutionMap = new HashMap<Integer, Integer>();
 
     this.crashMessage = null;
+    this.epochNumber = 0;
+    this.epochTimestamp = 0;
+
+    this.writeInProgress = false;
+    this.latestProcessedWriteId = -1;
   }
 
   // === PROPS ===
@@ -268,8 +284,19 @@ public class Replica extends AbstractReplica {
         getSelf());
   }
 
-  private Cancellable scheduleMessage(Serializable message, int initialDelay, int repetitionDelay, ActorRef dst) {
-    return getContext().system().scheduler().scheduleWithFixedDelay(
+  private Cancellable scheduleMessage(Serializable message, int initialDelay, int repetitionDelay, ActorRef dst,
+      boolean waitPreviousTaskEnd) {
+    if (waitPreviousTaskEnd) {
+      return getContext().system().scheduler().scheduleWithFixedDelay(
+          Duration.create(initialDelay, TimeUnit.MILLISECONDS),
+          Duration.create(repetitionDelay,
+              TimeUnit.MILLISECONDS),
+          dst,
+          message,
+          getContext().dispatcher(),
+          getSelf());
+    }
+    return getContext().system().scheduler().scheduleAtFixedRate(
         Duration.create(initialDelay, TimeUnit.MILLISECONDS),
         Duration.create(repetitionDelay,
             TimeUnit.MILLISECONDS),
@@ -277,10 +304,13 @@ public class Replica extends AbstractReplica {
         message,
         getContext().dispatcher(),
         getSelf());
+
   }
 
   private void performUnstableWrite() {
     this.database.replace(this.unstableWrite.index, this.unstableWrite.value);
+
+    this.latestProcessedWriteId = this.unstableWrite.index;
 
     callbackOnUpdateApplied(this.unstableWrite.index, this.unstableWrite.value);
   }
@@ -310,22 +340,22 @@ public class Replica extends AbstractReplica {
       return;
     }
 
-    crashMessage = how_to_crash;
+    this.crashMessage = how_to_crash;
 
   }
 
   private void crashNow() {
     if (heartbeatSendTask != null && !heartbeatSendTask.isCancelled()) {
-      heartbeatSendTask.cancel();
+      this.heartbeatSendTask.cancel();
     }
     if (heartbeatReceivedStatusTask != null && !heartbeatReceivedStatusTask.isCancelled()) {
-      heartbeatReceivedStatusTask.cancel();
+      this.heartbeatReceivedStatusTask.cancel();
     }
     if (checkSynchronizationMsgTask != null && !checkSynchronizationMsgTask.isCancelled()) {
-      checkSynchronizationMsgTask.cancel();
+      this.checkSynchronizationMsgTask.cancel();
     }
     if (heartbeatListeningStatusTask != null && !heartbeatListeningStatusTask.isCancelled()) {
-      heartbeatListeningStatusTask.cancel();
+      this.heartbeatListeningStatusTask.cancel();
     }
 
     // Kill the replica
@@ -333,7 +363,7 @@ public class Replica extends AbstractReplica {
   }
 
   private boolean willReplicaCrash() {
-    if (crashMessage != null) {
+    if (this.crashMessage != null) {
       if (crashMessage.after_n_messages_of_type == 0) {
         return true;
       }
@@ -358,13 +388,7 @@ public class Replica extends AbstractReplica {
 
     if (id == coordinatorId) {
       // scheduleAtFixedRate schedule without waiting for the previous task to end
-      heartbeatSendTask = getContext().system().scheduler().scheduleAtFixedRate(
-          Duration.Zero(),
-          Duration.create(getCoordinatorBeatInterval(), TimeUnit.MILLISECONDS),
-          getSelf(),
-          new SendHeartbeat(),
-          getContext().dispatcher(),
-          getSelf());
+      heartbeatSendTask = scheduleMessage(new SendHeartbeat(), 0, getCoordinatorBeatInterval(), getSelf(), false);
 
     } else {
       // If the current replica is not the coordinator, normally it starts to listen
@@ -447,7 +471,7 @@ public class Replica extends AbstractReplica {
       Map<Integer, Integer> previousReplicaList = new HashMap<Integer, Integer>(
           receivedPreviousReplicasMap.orElse(Collections.emptyMap()));
 
-      previousReplicaList.put(id, 0); // TODO add actual current transactionID
+      previousReplicaList.put(id, latestProcessedWriteId);
 
       previousReplicaList = Collections.unmodifiableMap(previousReplicaList);
 
@@ -455,7 +479,12 @@ public class Replica extends AbstractReplica {
 
       final ElectionStarted msg = new ElectionStarted(originalReplicaId, id, coordinatorId, previousReplicaList);
 
-      receivedElectionAckMap.put(originalReplicaId, 0);
+      Integer oldAckCounterValue = receivedElectionAckMap.get(originalReplicaId);
+      if (oldAckCounterValue != null) {
+        receivedElectionAckMap.put(originalReplicaId, oldAckCounterValue);
+      } else {
+        receivedElectionAckMap.put(originalReplicaId, 0);
+      }
 
       this.tell(msg, replicasGroup.get((destinationReplicaId) % getSystemNumberOfActors()));
 
@@ -490,26 +519,23 @@ public class Replica extends AbstractReplica {
 
     coordinatorSubstitutionMap.put(coordinatorId, this.id);
 
+    this.epochNumber += 1;
+    this.epochTimestamp = 0;
     coordinatorId = this.id;
 
     // Create synchronization message
-    // TODO change with actual current transactionId
-    CoordinatorElected msg = new CoordinatorElected(this.id, this.id, 0, 0);
+    Integer dbValue = this.database.get(latestProcessedWriteId);
+
+    CoordinatorElected msg = new CoordinatorElected(this.id, this.id, latestProcessedWriteId,
+        dbValue == null ? -1 : dbValue);
 
     // Restart sending heartbeats
-
-    heartbeatSendTask = getContext().system().scheduler().scheduleAtFixedRate(
-        Duration.Zero(),
-        Duration.create(getCoordinatorBeatInterval(), TimeUnit.MILLISECONDS),
-        getSelf(),
-        new SendHeartbeat(),
-        getContext().dispatcher(),
-        getSelf());
+    heartbeatSendTask = scheduleMessage(new SendHeartbeat(), 0, getCoordinatorBeatInterval(), getSelf(), false);
 
     broadcast(msg, false, false);
 
     // Reset for next election
-    super.callbackOnCoordinatorElected(this.id, 0, 0);
+    callbackOnCoordinatorElected(this.id, 0, 0);
     hasElectionStarted = false;
     receivedElectionAckMap.clear();
     electionRetries = 0;
@@ -595,17 +621,17 @@ public class Replica extends AbstractReplica {
 
     Set<Integer> replicasId = replicasMap.keySet();
     Integer newLeaderId = -1;
-    Integer newLeaderTransactionId = -1;
+    Integer newLeaderWriteId = -1;
 
     for (Integer id : replicasId) {
-      Integer transactionId = replicasMap.get(id);
+      Integer writeId = replicasMap.get(id);
 
-      if (transactionId > newLeaderTransactionId) {
+      if (writeId > newLeaderWriteId) {
 
         newLeaderId = id;
-        newLeaderTransactionId = transactionId;
+        newLeaderWriteId = writeId;
 
-      } else if (transactionId == newLeaderTransactionId && id > newLeaderId) {
+      } else if (writeId == newLeaderWriteId && id > newLeaderId) {
 
         newLeaderId = id;
 
@@ -618,7 +644,7 @@ public class Replica extends AbstractReplica {
   private void checkHeartbeatListeningStatus(CheckHeartbeatListeningStatus msg) {
     if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
       heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
-          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf());
+          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf(), true);
     }
   }
 
@@ -711,7 +737,7 @@ public class Replica extends AbstractReplica {
       // Restart the listening if it was not active. This can happen after a leader
       // election
       heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
-          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf());
+          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf(), true);
     }
   }
 
@@ -725,11 +751,14 @@ public class Replica extends AbstractReplica {
     coordinatorSubstitutionMap.put(coordinatorId, msg.newCoordinatorId);
 
     // Set the coordinator id
+    this.epochNumber += 1;
+    this.epochTimestamp = 0;
     coordinatorId = msg.newCoordinatorId;
 
-    super.callbackOnCoordinatorElected(coordinatorId, msg.transactionId, msg.transactionValue);
+    // Update transactionId and transactionValue
+    this.database.replace(msg.dbId, msg.dbValue);
 
-    // TODO update transactionId and transactionValue
+    super.callbackOnCoordinatorElected(coordinatorId, msg.dbId, msg.dbValue);
 
     // heartbeats listening will restart upon receiving a new heartbeat from the new
     // leader, however the new coordinator can shutdown before being able to send
