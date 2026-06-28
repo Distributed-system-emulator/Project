@@ -37,7 +37,7 @@ public abstract class AbstractClient extends AbstractActor {
   // API Messages
   // =================================================================================
 
-  public static class ReadRequest {
+  public static class ReadRequest implements Serializable {
     ActorRef replica;
     int index;
 
@@ -51,7 +51,7 @@ public abstract class AbstractClient extends AbstractActor {
     }
   }
 
-  public static class WriteRequest {
+  public static class WriteRequest implements Serializable {
     ActorRef replica;
     int index;
     int value;

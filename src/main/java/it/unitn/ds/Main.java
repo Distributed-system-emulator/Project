@@ -96,7 +96,7 @@ public class Main {
      * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
      * }, 1000, TimeUnit.MILLISECONDS);
      * 
-     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * /* Executors.newSingleThreadScheduledExecutor().schedule(() -> {
      * rg.get(6).tell(crashMsg, Actor.noSender());
      * }, 7000, TimeUnit.MILLISECONDS);
      * 

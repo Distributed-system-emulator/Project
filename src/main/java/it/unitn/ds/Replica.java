@@ -5,11 +5,16 @@ import akka.actor.Cancellable;
 import akka.actor.Props;
 import scala.concurrent.duration.Duration;
 
+import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -79,6 +84,62 @@ public class Replica extends AbstractReplica {
 
   private Map<Integer, Integer> coordinatorSubstitutionMap;
 
+  /**
+   * Current quorum according to active replicas.
+   */
+  private int quorum;
+  /**
+   * Counter of ACKs for the quorum.
+   */
+  private int writeAckCounter;
+
+  /**
+   * The write that is currently being processed by the coordinator.
+   */
+  private WriteNotification unstableWrite;
+
+  /**
+   * Queue of write requests received by the coordinator.
+   */
+  private Queue<WriteRequestToCoordinator> writeRequestsQueue;
+  /**
+   * Whether the coordinator is processing a write.
+   */
+  private boolean writeInProgress = false;
+
+  /**
+   * (client, write request) pair record.
+   * 
+   * @param client       the client that requested the write to the replica
+   * @param writeRequest the actual write request
+   */
+  private record ClientWriteRequestPair(ActorRef client, WriteRequest writeRequest) {
+  }
+
+  /**
+   * Queue of (client, write request) pairs.
+   */
+  private Queue<ClientWriteRequestPair> clientWriteRequestQueue;
+
+  /**
+   * List of replica IDs that did not sent the write notification ACK yet.
+   */
+  private List<Integer> pendingAcks;
+  /**
+   * The round of ACKs.
+   */
+  private long acksRound = 0;
+
+  /**
+   * Timestamp of the last write.
+   */
+  private long ts = 0;
+
+  /**
+   * Database of (person index, location) pairs.
+   */
+  private Map<Integer, Integer> database;
+
   // === CONSTRUCTORS ===
 
   public Replica(int id) {
@@ -89,21 +150,33 @@ public class Replica extends AbstractReplica {
         AbstractReplica.HEARTBEAT_STATUS_CHECK_WAIT_TIME,
         AbstractReplica.SYNC_MESSAGE_WAIT_TIME,
         Optional.empty());
+    init();
   }
 
   public Replica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval, int heartbeatStatusCheckWaitTime,
       int syncMessageWaitTime, Optional<ActorRef> listener) {
     super(id, minLatency, maxLatency, coordinatorBeatInterval, heartbeatStatusCheckWaitTime, syncMessageWaitTime,
         listener);
+    init();
+  }
 
-    replicasGroup = new HashMap<Integer, ActorRef>();
-    heartbeatSendTask = null;
-    heartbeatListeningStatusTask = null;
-    checkSynchronizationMsgTask = null;
-    hasElectionStarted = false;
-    electionRetries = 0;
-    receivedElectionAckMap = new HashMap<Integer, Integer>();
-    coordinatorSubstitutionMap = new HashMap<Integer, Integer>();
+  private void init() {
+    this.replicasGroup = new HashMap<Integer, ActorRef>();
+    this.writeRequestsQueue = new LinkedList<WriteRequestToCoordinator>();
+    this.clientWriteRequestQueue = new LinkedList<ClientWriteRequestPair>();
+    this.pendingAcks = new ArrayList<Integer>();
+
+    this.database = new HashMap<Integer, Integer>();
+    this.database.put(0, 10);
+
+    this.replicasGroup = new HashMap<Integer, ActorRef>();
+    this.heartbeatSendTask = null;
+    this.heartbeatListeningStatusTask = null;
+    this.checkSynchronizationMsgTask = null;
+    this.hasElectionStarted = false;
+    this.electionRetries = 0;
+    this.receivedElectionAckMap = new HashMap<Integer, Integer>();
+    this.coordinatorSubstitutionMap = new HashMap<Integer, Integer>();
   }
 
   // === PROPS ===
@@ -126,6 +199,75 @@ public class Replica extends AbstractReplica {
 
   // === METHODS ===
 
+  private void updateQuorum() {
+    this.quorum = Math.floorDiv(getSystemNumberOfActors(), 2) + 1;
+  }
+
+  private void processWrite(WriteRequestToCoordinator writeRequestToCoordinator) {
+    this.writeInProgress = true;
+
+    WriteNotification writeNotification = new WriteNotification(
+        writeRequestToCoordinator.replicaId,
+        writeRequestToCoordinator.index,
+        writeRequestToCoordinator.value);
+
+    this.writeAckCounter = 1; // Include the coordinator in the quorum
+    this.unstableWrite = writeNotification;
+
+    broadcast(writeNotification, false, true);
+  }
+
+  private void broadcast(Serializable message, boolean includeMyself, boolean setTimeout) {
+    for (int i = 0; i < this.replicasGroup.size(); i++) {
+      if (i == id) {
+        if (includeMyself) {
+          // If requested to send to myself too, use Akka .tell() function without delays
+          getSelf().tell(message, getSelf());
+        }
+
+        continue;
+      }
+
+      tell(message, this.replicasGroup.get(i));
+    }
+
+    if (setTimeout) {
+      // Set a timeout for waiting the ACKs of all the other replicas
+      // (excluding myself)
+      this.pendingAcks.clear();
+      this.pendingAcks.addAll(replicasGroup.keySet());
+      this.pendingAcks.remove(Integer.valueOf(id));
+
+      acksRound++;
+      int timeout = 200;
+      scheduleMessage(new WriteNotificationTimeout(acksRound), timeout, getSelf());
+    }
+  }
+
+  private void scheduleMessage(Serializable message, int delay, ActorRef dst) {
+    getContext().system().scheduler().scheduleOnce(
+        Duration.create(delay, TimeUnit.MILLISECONDS),
+        dst,
+        message,
+        getContext().system().dispatcher(),
+        getSelf());
+  }
+
+  private void performUnstableWrite() {
+    this.database.replace(this.unstableWrite.index, this.unstableWrite.value);
+  }
+
+  private void processNextWriteIfAny() {
+    if (!this.writeRequestsQueue.isEmpty()) {
+      // Process pending writes, if any
+      processWrite(this.writeRequestsQueue.poll());
+
+      return;
+    }
+
+    this.writeInProgress = false;
+  }
+
   @Override
   public int getSystemNumberOfActors() {
     return replicasGroup.size();
@@ -138,6 +280,7 @@ public class Replica extends AbstractReplica {
     switch (how_to_crash.type) {
       case Crash.Type.Heartbeat:
         // If the the heartbeatSendTask was present, wait for its completion and cancel
+        // TODO change wrt the description
         if (heartbeatSendTask != null) {
           heartbeatSendTask.cancel();
           heartbeatSendTask = null;
@@ -165,9 +308,11 @@ public class Replica extends AbstractReplica {
     replicasGroup = Collections.unmodifiableMap(sysInit.group);
     coordinatorId = sysInit.coordinator_id;
 
+    updateQuorum();
+
     // If the current replica is the coordinator, start sending heartbeat messages
 
-    if (super.id == coordinatorId) {
+    if (id == coordinatorId) {
       // scheduleAtFixedRate schedule without waiting for the previous task to end
       heartbeatSendTask = getContext().system().scheduler().scheduleAtFixedRate(
           Duration.Zero(),
@@ -183,7 +328,7 @@ public class Replica extends AbstractReplica {
       // listening was started, otherwise start it anyway
       heartbeatListeningStatusTask = getContext().system().scheduler().scheduleOnce(
           Duration.create(
-              super.getHeartbeatStatusCheckWaitTime(), TimeUnit.MILLISECONDS),
+              getHeartbeatStatusCheckWaitTime(), TimeUnit.MILLISECONDS),
           getSelf(),
           new CheckHeartbeatListeningStatus(),
           getContext().getSystem().dispatcher(),
@@ -587,12 +732,162 @@ public class Replica extends AbstractReplica {
     receivedElectionAckMap.clear();
   }
 
+  public void onReadRequest(ReadRequest readRequest) {
+    if (!database.containsKey(readRequest.index)) {
+      AbstractClient.ReadResult readResult = new AbstractClient.ReadResult(
+          false,
+          readRequest.index,
+          0,
+          this.id);
+
+      tell(readResult, getSender());
+
+      return;
+    }
+
+    AbstractClient.ReadResult readResult = new AbstractClient.ReadResult(
+        true,
+        readRequest.index,
+        this.database.get(readRequest.index),
+        this.id);
+
+    tell(readResult, getSender());
+  }
+
+  public void onWriteRequest(WriteRequest writeRequest) {
+    if (!database.containsKey(writeRequest.index)) {
+      // Write failed because index not present in the database
+      AbstractClient.WriteResult writeResult = new AbstractClient.WriteResult(
+          false,
+          writeRequest.index,
+          0,
+          this.id);
+
+      tell(writeResult, getSender());
+
+      return;
+    }
+
+    // Store the pair client-request
+    this.clientWriteRequestQueue.add(new ClientWriteRequestPair(getSender(), writeRequest));
+
+    // Forward the request to the coordinator
+    WriteRequestToCoordinator writeRequestToCoordinator = new WriteRequestToCoordinator(
+        this.id,
+        writeRequest.index,
+        writeRequest.value);
+    tell(writeRequestToCoordinator, this.replicasGroup.get(this.coordinatorId));
+  }
+
+  public void onWriteRequestToCoordinator(WriteRequestToCoordinator writeRequestToCoordinator) {
+    log("WRITE request (" + writeRequestToCoordinator.index + ", " + writeRequestToCoordinator.value + ")");
+
+    if (this.writeInProgress) {
+      // ... store the write in the queue if another one is getting processed ...
+      this.writeRequestsQueue.add(writeRequestToCoordinator);
+    } else if (!this.writeRequestsQueue.isEmpty()) {
+      // ... otherwise, if some writes are pending,
+      // push the new one and execute the first one in the queue ...
+      this.writeRequestsQueue.add(writeRequestToCoordinator);
+      processWrite(this.writeRequestsQueue.poll());
+    } else {
+      // ... finally, if the queue is empty, process the received request
+      processWrite(writeRequestToCoordinator);
+    }
+  }
+
+  public void onWriteNotification(WriteNotification writeNotification) {
+    log("WRITE notification (" + writeNotification.index + ", " + writeNotification.value + ")");
+
+    // Other replicas store the unstable write received by the coordinator
+    this.unstableWrite = writeNotification;
+
+    // Send back the ACK with my id included
+    WriteNotificationAck ack = new WriteNotificationAck(id);
+    tell(ack, this.replicasGroup.get(this.coordinatorId));
+  }
+
+  public void onWriteNotificationAck(WriteNotificationAck ack) {
+    log("WRITE notification ACK (" + ack.replicaId + ")");
+
+    pendingAcks.remove(Integer.valueOf(ack.replicaId));
+
+    if (pendingAcks.isEmpty()) {
+      log("All ACKs received");
+
+      processNextWriteIfAny();
+
+      return;
+    }
+
+    this.writeAckCounter++;
+    if (this.writeAckCounter == this.quorum) {
+      log("WRITE quorum reached");
+
+      // The coordinator immediately increases the writes timestamp
+      this.ts++;
+
+      // Quorum reached, broadcast WriteOK to all replicas including the coordinator
+      // itself so, in case, it can send the result to the client too
+      WriteOK writeOK = new WriteOK(this.ts, this.unstableWrite.originalReplicaId);
+      broadcast(writeOK, true, false);
+    }
+  }
+
+  public void onWriteNotificationTimeout(WriteNotificationTimeout writeNotificationTimeout) {
+    // Ignore stale timeout, a new write request is being processed
+    if (writeNotificationTimeout.ackRound != this.acksRound)
+      return;
+
+    if (!this.pendingAcks.isEmpty()) {
+      // The replicas that did not send the ACKs are considered crashed,
+      // so update the replicas group and the quorum
+      for (int crashedReplicaId : this.pendingAcks) {
+        log("NO ACK from " + replicasGroup.get(crashedReplicaId).path().name() + " (CRASH)");
+
+        this.replicasGroup.remove(crashedReplicaId);
+      }
+
+      updateQuorum();
+
+      processNextWriteIfAny();
+    }
+  }
+
+  public void onWriteOK(WriteOK writeOK) {
+    log("WRITE OK");
+
+    performUnstableWrite();
+
+    if (this.id != this.coordinatorId) {
+      // Other replicas update the writes timestamp with the received one
+      this.ts = writeOK.ts;
+    }
+
+    if (writeOK.originalReplicaId == this.id) {
+      // I am the replica to which the client requested the processed write
+      AbstractClient.WriteResult writeResult = new AbstractClient.WriteResult(
+          true,
+          this.unstableWrite.index,
+          this.unstableWrite.value,
+          this.id);
+
+      tell(writeResult, this.clientWriteRequestQueue.poll().client);
+    }
+  }
+
   @Override
   public final Receive createReceive() {
     return createBaseReceiveBuilder()
         // Listener should be one replica and should be invoked to log
         // coordElect / write / join coordination election / crash message received
-        // TODO add your message handlers here .match(, )
+        .match(ReadRequest.class, this::onReadRequest)
+        .match(WriteRequest.class, this::onWriteRequest)
+        .match(WriteRequestToCoordinator.class, this::onWriteRequestToCoordinator)
+        .match(WriteNotification.class, this::onWriteNotification)
+        .match(WriteNotificationAck.class, this::onWriteNotificationAck)
+        .match(WriteNotificationTimeout.class, this::onWriteNotificationTimeout)
+        .match(WriteOK.class, this::onWriteOK)
         .match(CheckSynchronizationMsg.class, this::checkSynchronizationMsgReception)
         .match(CheckHeartbeatListeningStatus.class, this::checkHeartbeatListeningStatus)
         .match(SendElectionMsg.class, this::sendElectionMsg)

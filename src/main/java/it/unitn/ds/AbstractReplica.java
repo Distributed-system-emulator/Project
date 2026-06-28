@@ -462,6 +462,74 @@ public abstract class AbstractReplica extends AbstractActor {
     }
   }
 
+  public static class ReadRequest implements Serializable {
+    int index;
+
+    public ReadRequest(int index) {
+      this.index = index;
+    }
+  }
+
+  public static class WriteRequest implements Serializable {
+    int index;
+    int value;
+
+    public WriteRequest(int index, int value) {
+      this.index = index;
+      this.value = value;
+    }
+  }
+
+  public static class WriteRequestToCoordinator implements Serializable {
+    int replicaId;
+    int index;
+    int value;
+
+    public WriteRequestToCoordinator(int replicaId, int index, int value) {
+      this.replicaId = replicaId;
+      this.index = index;
+      this.value = value;
+    }
+  }
+
+  public static class WriteNotification implements Serializable {
+    int originalReplicaId;
+    int index;
+    int value;
+
+    WriteNotification(int originalReplicaId, int index, int value) {
+      this.originalReplicaId = originalReplicaId;
+      this.index = index;
+      this.value = value;
+    }
+  }
+
+  public static class WriteNotificationAck implements Serializable {
+    int replicaId;
+
+    WriteNotificationAck(int replicaId) {
+      this.replicaId = replicaId;
+    }
+  }
+
+  public static class WriteNotificationTimeout implements Serializable {
+    long ackRound;
+
+    public WriteNotificationTimeout(long ackRound) {
+      this.ackRound = ackRound;
+    }
+  }
+
+  public static class WriteOK implements Serializable {
+    long ts;
+    int originalReplicaId;
+
+    public WriteOK(long ts, int originalReplicaId) {
+      this.ts = ts;
+      this.originalReplicaId = originalReplicaId;
+    }
+  }
+
   // =================================================================================
   // Mandatory API Callbacks
   // =================================================================================

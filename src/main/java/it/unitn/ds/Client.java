@@ -25,12 +25,18 @@ public class Client extends AbstractClient {
 
   @Override
   public void sendRead(ActorRef replica, int index) {
-    // TODO: implement
+    log("READ request (" + index + ")");
+
+    AbstractReplica.ReadRequest readRequest = new AbstractReplica.ReadRequest(index);
+    replica.tell(readRequest, getSelf());
   }
 
   @Override
   public void sendWrite(ActorRef replica, int index, int value) {
-    // TODO: implement
+    log("WRITE request (" + index + ", " + value + ")");
+
+    AbstractReplica.WriteRequest writeRequest = new AbstractReplica.WriteRequest(index, value);
+    replica.tell(writeRequest, getSelf());
   }
 
   @Override
@@ -39,6 +45,8 @@ public class Client extends AbstractClient {
         // Listener should be one client itself and should be invoked to log
         // read/write/timeout read/timeout write
         // TODO add your message handlers here .match(, )
+        .match(ReadResult.class, this::callbackOnReadResult)
+        .match(WriteResult.class, this::callbackOnWriteResult)
         .build();
   }
 }
