@@ -2,8 +2,11 @@ package it.unitn.ds;
 
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import scala.concurrent.duration.Duration;
 
+import java.io.Serializable;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 public class Client extends AbstractClient {
   Client(long readTimeoutDelay, long writeTimeoutDelay, Optional<ActorRef> defaultTargetReplica,
@@ -29,6 +32,14 @@ public class Client extends AbstractClient {
 
     AbstractReplica.ReadRequest readRequest = new AbstractReplica.ReadRequest(index);
     replica.tell(readRequest, getSelf());
+
+    ReadTimeout readTimeout = new ReadTimeout(getSelf(), replica, index);
+    getContext().system().scheduler().scheduleOnce(
+        Duration.create(getReadTimeoutDelay(), TimeUnit.MILLISECONDS),
+        getSelf(),
+        readTimeout,
+        getContext().system().dispatcher(),
+        getSelf());
   }
 
   @Override
@@ -37,6 +48,26 @@ public class Client extends AbstractClient {
 
     AbstractReplica.WriteRequest writeRequest = new AbstractReplica.WriteRequest(index, value);
     replica.tell(writeRequest, getSelf());
+
+    WriteTimeout writeTimeout = new WriteTimeout(getSelf(), replica, index, value);
+    getContext().system().scheduler().scheduleOnce(
+        Duration.create(getWriteTimeoutDelay(), TimeUnit.MILLISECONDS),
+        getSelf(),
+        writeTimeout,
+        getContext().system().dispatcher(),
+        getSelf());
+  }
+
+  public void onReadTimeout(ReadTimeout timeout) {
+    // TODO: check if the relative request is already received
+
+    callbackOnReadTimeout(timeout);
+  }
+
+  public void onWriteTimeout(WriteTimeout timeout) {
+    // TODO: check if the relative request is already received
+
+    callbackOnWriteTimeout(timeout);
   }
 
   @Override
@@ -47,6 +78,8 @@ public class Client extends AbstractClient {
         // TODO add your message handlers here .match(, )
         .match(ReadResult.class, this::callbackOnReadResult)
         .match(WriteResult.class, this::callbackOnWriteResult)
+        .match(ReadTimeout.class, this::onReadTimeout)
+        .match(WriteTimeout.class, this::onWriteTimeout)
         .build();
   }
 }

@@ -7,7 +7,6 @@ import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -23,12 +22,12 @@ public class Replica extends AbstractReplica {
   // === ATTRIBUTES ===
 
   /**
-   * Number of the current epoch (corresponds to e of <e,i>).
+   * Number of the current epoch (corresponds to e in <e,i>).
    */
   private Integer epochNumber;
 
   /**
-   * Number of the timestamp in the current epoch (corresponds to i of <e,i>).
+   * Number of the timestamp in the current epoch (corresponds to i in <e,i>).
    */
   private Integer epochTimestamp;
 
@@ -379,14 +378,12 @@ public class Replica extends AbstractReplica {
       // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
       // every node to process the message
 
-      getContext().system().scheduler()
-          .scheduleOnce(
-              Duration.create(replicasGroup.size() * (getMaxLatency() + 100), TimeUnit.MILLISECONDS),
-              getSelf(),
-              new SendElectionMsg(this.id, (id + 1) % replicasGroup.size(), Optional.empty()),
-              getContext().getSystem().dispatcher(),
-              getSelf());
-
+      getContext().system().scheduler().scheduleOnce(
+          Duration.create(replicasGroup.size() * (getMaxLatency() + 100), TimeUnit.MILLISECONDS),
+          getSelf(),
+          new SendElectionMsg(this.id, (id + 1) % replicasGroup.size(), Optional.empty()),
+          getContext().getSystem().dispatcher(),
+          getSelf());
     }
   }
 
@@ -508,7 +505,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void checkElectionAckReception(CheckElectionAckReception msg) {
-
     Optional<Map<Integer, Integer>> receivedPreviousReplicasMap = msg.receivedPreviousReplicasMap;
     int originalReplicaId = msg.originalReplicaId;
     Integer ackCounter = wasElectionAckReceived(originalReplicaId);
@@ -611,7 +607,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void onElectionStartedMsg(ElectionStarted msg) {
-
     // Send election ack message
     ElectionAck ackMsg = new ElectionAck(msg.originalReplicaId, id);
     this.tell(ackMsg, replicasGroup.get(msg.replicaId));
@@ -655,7 +650,6 @@ public class Replica extends AbstractReplica {
     hasElectionStarted = true;
 
     if (msg.previousReplicasMap.get(id) != null) {
-
       // If the new coordinator is the replica itself, send a synchronization message
       if (electedLeader == this.id) {
         sendSynchronizationMessage();
@@ -673,7 +667,6 @@ public class Replica extends AbstractReplica {
                 getContext().getSystem().dispatcher(),
                 getSelf());
       }
-
     }
 
     // Propagate the message (sendElectionMsg already filters wrt replica
