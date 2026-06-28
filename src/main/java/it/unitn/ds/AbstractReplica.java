@@ -526,11 +526,11 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class WriteOK implements Serializable {
-    long ts;
+    int epochTimestamp;
     int originalReplicaId;
 
-    public WriteOK(long ts, int originalReplicaId) {
-      this.ts = ts;
+    public WriteOK(int epochTimestamp, int originalReplicaId) {
+      this.epochTimestamp = epochTimestamp;
       this.originalReplicaId = originalReplicaId;
     }
   }

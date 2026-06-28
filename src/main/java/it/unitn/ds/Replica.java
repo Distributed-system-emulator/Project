@@ -22,12 +22,12 @@ public class Replica extends AbstractReplica {
   // === ATTRIBUTES ===
 
   /**
-   * Number of the current epoch (corresponds to e of <e,i>).
+   * Number of the current epoch (corresponds to e in <e,i>).
    */
   private Integer epochNumber;
 
   /**
-   * Number of the timestamp in the current epoch (corresponds to i of <e,i>).
+   * Number of the timestamp in the current epoch (corresponds to i in <e,i>).
    */
   private Integer epochTimestamp;
 
@@ -144,7 +144,7 @@ public class Replica extends AbstractReplica {
   /**
    * Timestamp of the last write.
    */
-  private long ts = 0;
+  // private long ts = 0;
 
   /**
    * Database of (person index, location) pairs.
@@ -281,6 +281,8 @@ public class Replica extends AbstractReplica {
 
   private void performUnstableWrite() {
     this.database.replace(this.unstableWrite.index, this.unstableWrite.value);
+
+    callbackOnUpdateApplied(this.unstableWrite.index, this.unstableWrite.value);
   }
 
   private void processNextWriteIfAny() {
@@ -529,7 +531,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void checkElectionAckReception(CheckElectionAckReception msg) {
-
     Optional<Map<Integer, Integer>> receivedPreviousReplicasMap = msg.receivedPreviousReplicasMap;
     int originalReplicaId = msg.originalReplicaId;
     Integer ackCounter = wasElectionAckReceived(originalReplicaId);
@@ -673,7 +674,6 @@ public class Replica extends AbstractReplica {
     hasElectionStarted = true;
 
     if (msg.previousReplicasMap.get(id) != null) {
-
       // If the new coordinator is the replica itself, send a synchronization message
       if (electedLeader == this.id) {
         sendSynchronizationMessage();
@@ -685,7 +685,6 @@ public class Replica extends AbstractReplica {
         // synchronization message)
         checkSynchronizationMsgTask = scheduleMessage(new CheckSynchronizationMsg(), getSyncMessageWaitTime(),
             getSelf());
-
       }
 
     }
@@ -837,11 +836,11 @@ public class Replica extends AbstractReplica {
       log("WRITE quorum reached");
 
       // The coordinator immediately increases the writes timestamp
-      this.ts++;
+      this.epochTimestamp++;
 
       // Quorum reached, broadcast WriteOK to all replicas including the coordinator
       // itself so, in case, it can send the result to the client too
-      WriteOK writeOK = new WriteOK(this.ts, this.unstableWrite.originalReplicaId);
+      WriteOK writeOK = new WriteOK(this.epochTimestamp, this.unstableWrite.originalReplicaId);
       broadcast(writeOK, true, false);
     }
   }
@@ -873,7 +872,7 @@ public class Replica extends AbstractReplica {
 
     if (this.id != this.coordinatorId) {
       // Other replicas update the writes timestamp with the received one
-      this.ts = writeOK.ts;
+      this.epochTimestamp = writeOK.epochTimestamp;
     }
 
     if (writeOK.originalReplicaId == this.id) {
