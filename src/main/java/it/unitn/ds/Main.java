@@ -105,15 +105,10 @@ public class Main {
      * }, 15000, TimeUnit.MILLISECONDS);
      */
 
+    // Crash before synchronization: add the following code on
+    // sendSynchronization message
+
     /*
-     * // Crash before synchronization: add the following code on
-     * sendSynchronization message
-     * 
-     * if (this.id == 6) {
-     * super.log("killed 6");
-     * getContext().stop(getSelf());
-     * return;
-     * }
      * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
      * final Map<Integer, ActorRef> rg = replicasGroup;
      * Executors.newSingleThreadScheduledExecutor().schedule(() -> {

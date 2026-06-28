@@ -21,6 +21,17 @@ import java.util.concurrent.TimeUnit;
 public class Replica extends AbstractReplica {
 
   // === ATTRIBUTES ===
+
+  /**
+   * Number of the current epoch (corresponds to e of <e,i>).
+   */
+  private Integer epochNumber;
+
+  /**
+   * Number of the timestamp in the current epoch (corresponds to i of <e,i>).
+   */
+  private Integer epochTimestamp;
+
   /**
    * Represents the list of replicas.
    */
@@ -32,44 +43,44 @@ public class Replica extends AbstractReplica {
   private Integer coordinatorId;
 
   /**
-   * This attribute will have the scheduled task for sending heartbeat messages
+   * This attribute will have the scheduled task for sending heartbeat messages.
    */
   private Cancellable heartbeatSendTask;
 
   /**
    * This attribute will have the scheduled task for checking whether a heartbeat
-   * message was received
+   * message was received.
    */
   private Cancellable heartbeatReceivedStatusTask;
 
   /**
    * This attribute will have the scheduled task for checking whether the
-   * synchronization message arrived after an election
+   * synchronization message arrived after an election.
    */
   private Cancellable checkSynchronizationMsgTask;
 
   /**
    * This attribute will have the scheduled task for checking whether the
-   * heartbeat listening was restarted
+   * heartbeat listening was restarted.
    */
   private Cancellable heartbeatListeningStatusTask;
 
   /**
    * This attribute is check every
    * {@link coordinatorBeatInterval}+{@link maxLatency} to see whether an
-   * heartbeat was received from the coordinator
+   * heartbeat was received from the coordinator.
    */
   private boolean wasHeartbeatReceived;
 
   /**
    * This attribute is used to check whether an election message was already
-   * received
+   * received.
    */
   private boolean hasElectionStarted;
 
   /**
    * This attribute is used to check how many retry before a successful sending of
-   * an election message
+   * an election message.
    */
   private Integer electionRetries;
 
@@ -78,7 +89,7 @@ public class Replica extends AbstractReplica {
    * Map keeps track for every new message if the respective ack was received. An
    * entry is deleted when the ack is received for the second time, meaning the
    * original message performed two rounds of the ring. The list is completely
-   * emptied out when a synchronization message is received
+   * emptied out when a synchronization message is received.
    */
   private Map<Integer, Integer> receivedElectionAckMap;
 
@@ -88,6 +99,7 @@ public class Replica extends AbstractReplica {
    * Current quorum according to active replicas.
    */
   private int quorum;
+
   /**
    * Counter of ACKs for the quorum.
    */
@@ -188,7 +200,7 @@ public class Replica extends AbstractReplica {
             Optional.empty()));
   }
 
-  // Props method for automated tests
+  // Props method for automated tests.
   public static Props propsWithListener(int id, int minLatency, int maxLatency, int coordinatorBeatInterval,
       ActorRef listener) {
     return Props.create(Replica.class,
@@ -435,7 +447,7 @@ public class Replica extends AbstractReplica {
   }
 
   /**
-   * Overload of {@code sendElectionMsg} for scheduled operation
+   * Overload of {@code sendElectionMsg} for scheduled operation.
    * 
    * @param msg
    */
@@ -446,6 +458,13 @@ public class Replica extends AbstractReplica {
   }
 
   private void sendSynchronizationMessage() {
+
+    if (this.id == 6) {
+      super.log("killed 6");
+      getContext().stop(getSelf());
+      return;
+    }
+
     coordinatorSubstitutionMap.put(coordinatorId, this.id);
 
     coordinatorId = this.id;
@@ -464,18 +483,7 @@ public class Replica extends AbstractReplica {
         getContext().dispatcher(),
         getSelf());
 
-    // Create a copy of all the replicas without the current one
-    Map<Integer, ActorRef> replicasGroupClone = new HashMap<Integer, ActorRef>();
-    replicasGroupClone.putAll(replicasGroup);
-
-    replicasGroupClone.remove(this.id);
-
-    Collection<ActorRef> replicas = replicasGroupClone.values();
-
-    // Send message in broadcast
-    for (ActorRef replica : replicas) {
-      this.tell(msg, replica);
-    }
+    broadcast(msg, false, false);
 
     // Reset for next election
     super.callbackOnCoordinatorElected(this.id, 0, 0);
