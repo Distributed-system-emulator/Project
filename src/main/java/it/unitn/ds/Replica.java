@@ -429,13 +429,8 @@ public class Replica extends AbstractReplica {
       receivedElectionAckMap.clear();
       electionRetries = 0;
 
-      // Before sending an election message, wait for the worst case: the node id+1
-      // already sent one (check is performed upon receiving the scheduled message).
-      // This means every node must wait
-      // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
-      // every node to process the message
       scheduleMessage(new SendElectionMsg(this.id, (id + 1) % getSystemNumberOfActors(), Optional.empty()),
-          getSystemNumberOfActors() * (getMaxLatency() + 100), getSelf());
+          getNewElectionMessageWaitTime(), getSelf());
     }
   }
 
@@ -484,11 +479,8 @@ public class Replica extends AbstractReplica {
 
       this.tell(msg, replicasGroup.get((destinationReplicaId) % getSystemNumberOfActors()));
 
-      // Wait MAX_LATENCY*2 (round trip time) before checking if
-      // ack for the election was received. Since every node may be buffering other
-      // messages, 100 ms are added for every node
       scheduleMessage(new CheckElectionAckReception(originalReplicaId, wasElectionAckReceived(originalReplicaId),
-          receivedPreviousReplicasMap), this.getMaxLatency() * 2 + 100 * getSystemNumberOfActors(), getSelf());
+          receivedPreviousReplicasMap), getElectionMessageAckWaitTime(), getSelf());
 
     }
   }
@@ -512,7 +504,10 @@ public class Replica extends AbstractReplica {
       }
     }
 
+    // Put the replica in the new substitution map
     coordinatorSubstitutionMap.put(coordinatorId, this.id);
+
+    // Update coordinator id
     coordinatorId = this.id;
 
     // Create synchronization message
@@ -650,7 +645,7 @@ public class Replica extends AbstractReplica {
   private void checkHeartbeatListeningStatus(CheckHeartbeatListeningStatus msg) {
     if (heartbeatReceivedStatusTask == null || heartbeatReceivedStatusTask.isCancelled()) {
       heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
-          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf(), true);
+          getHeartbeatReceivedCheckWaitTime(), getSelf(), true);
     }
   }
 
@@ -743,7 +738,7 @@ public class Replica extends AbstractReplica {
       // Restart the listening if it was not active. This can happen after a leader
       // election
       heartbeatReceivedStatusTask = scheduleMessage(new CheckHeartbeatMsgStatus(), 0,
-          super.getCoordinatorBeatInterval() + super.getMaxLatencyPlusTolerance(), getSelf(), true);
+          getHeartbeatReceivedCheckWaitTime(), getSelf(), true);
     }
   }
 

@@ -106,6 +106,26 @@ public abstract class AbstractReplica extends AbstractActor {
     return syncMessageWaitTime;
   }
 
+  public int getNewElectionMessageWaitTime() {
+    // Before sending an election message, wait for the worst case: the node id+1
+    // already sent one (check is performed upon receiving the scheduled message).
+    // This means every node must wait
+    // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
+    // every node to process the message
+    return getSystemNumberOfActors() * (getMaxLatency() + 100);
+  }
+
+  public int getElectionMessageAckWaitTime() {
+    // Wait MAX_LATENCY*2 (round trip time) before checking if
+    // ack for the election was received. Since every node may be buffering other
+    // messages, 100 ms are added for every node
+    return this.getMaxLatency() * 2 + 100 * getSystemNumberOfActors();
+  }
+
+  public int getHeartbeatReceivedCheckWaitTime() {
+    return getCoordinatorBeatInterval() + getMaxLatencyPlusTolerance();
+  }
+
   /**
    * 
    * @return maximum latency + tolerance (based on the number of replicas) in

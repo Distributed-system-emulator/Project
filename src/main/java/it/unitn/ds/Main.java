@@ -128,7 +128,7 @@ public class Main {
      * }, 3000, TimeUnit.MILLISECONDS);
      */
 
-    // Crash multiple coordinator one after another
+    // Crash multiple coordinator one after
 
     /*
      * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
