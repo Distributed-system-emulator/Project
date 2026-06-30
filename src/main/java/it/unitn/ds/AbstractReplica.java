@@ -106,6 +106,11 @@ public abstract class AbstractReplica extends AbstractActor {
     return syncMessageWaitTime;
   }
 
+  /**
+   * 
+   * @return how much time to wait when an heartbeat message was missing and the
+   *         replica want to send an election message
+   */
   public int getNewElectionMessageWaitTime() {
     // Before sending an election message, wait for the worst case: the node id+1
     // already sent one (check is performed upon receiving the scheduled message).
@@ -115,14 +120,31 @@ public abstract class AbstractReplica extends AbstractActor {
     return getSystemNumberOfActors() * (getMaxLatency() + 100);
   }
 
+  /**
+   * 
+   * @return how much time the replica waits before checking if an election ack
+   *         message was sent
+   */
   public int getElectionMessageAckWaitTime() {
     // Wait MAX_LATENCY*2 (round trip time) before checking if
     // ack for the election was received. Since every node may be buffering other
     // messages, 100 ms are added for every node
-    return this.getMaxLatency() * 2 + 100 * getSystemNumberOfActors();
+
+    // For example, considering the worst scenario, all replica send an election
+    // message, replica 1 has to ack replica 6 for the ack messages of 6,5,4,3 and
+    // 2.
+    return getMaxLatency() * 2 + 100 * getSystemNumberOfActors();
   }
 
+  /**
+   * 
+   * @return how much time the replica waits to check the heartbeat message from
+   *         the last check
+   */
   public int getHeartbeatReceivedCheckWaitTime() {
+    // getMaxLatencyPlusTolerance because if replica 6 needs to receive the ack and
+    // coordinator 0 start with replica 1, I need to wait the message to go from 0
+    // to 1, 0 to 2, 0 to 3, and so on until 6
     return getCoordinatorBeatInterval() + getMaxLatencyPlusTolerance();
   }
 
