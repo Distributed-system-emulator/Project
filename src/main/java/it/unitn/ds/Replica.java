@@ -150,11 +150,6 @@ public class Replica extends AbstractReplica {
   private long acksRound = 0;
 
   /**
-   * The id of the latest write for which a writeOK was received
-   */
-  private Integer latestProcessedWriteId;
-
-  /**
    * Database of (person index, location) pairs.
    */
   private Map<Integer, Integer> database;
@@ -207,7 +202,6 @@ public class Replica extends AbstractReplica {
     this.epochTimestamp = 0;
 
     this.writeInProgress = false;
-    this.latestProcessedWriteId = -1;
   }
 
   // === PROPS ===
@@ -310,8 +304,6 @@ public class Replica extends AbstractReplica {
   private void performUnstableWrite() {
     this.database.replace(this.unstableWrite.index, this.unstableWrite.value);
 
-    this.latestProcessedWriteId = this.unstableWrite.index;
-
     callbackOnUpdateApplied(this.unstableWrite.index, this.unstableWrite.value);
   }
 
@@ -379,7 +371,9 @@ public class Replica extends AbstractReplica {
     // Initialize the replica group with what is contained on the initialization
     // message
 
-    replicasGroup = Collections.unmodifiableMap(sysInit.group);
+    replicasGroup = new HashMap<Integer, ActorRef>();
+    replicasGroup.putAll(sysInit.group);
+
     coordinatorId = sysInit.coordinator_id;
 
     updateQuorum();
@@ -471,7 +465,7 @@ public class Replica extends AbstractReplica {
       Map<Integer, Integer> previousReplicaList = new HashMap<Integer, Integer>(
           receivedPreviousReplicasMap.orElse(Collections.emptyMap()));
 
-      previousReplicaList.put(id, latestProcessedWriteId);
+      previousReplicaList.put(id, epochTimestamp);
 
       previousReplicaList = Collections.unmodifiableMap(previousReplicaList);
 
@@ -509,7 +503,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void sendSynchronizationMessage() {
-
     if (crashMessage != null && crashMessage.type == Crash.Type.ElectionSync) {
       if (willReplicaCrash()) {
         crashNow();
@@ -518,16 +511,23 @@ public class Replica extends AbstractReplica {
     }
 
     coordinatorSubstitutionMap.put(coordinatorId, this.id);
-
-    this.epochNumber += 1;
-    this.epochTimestamp = 0;
     coordinatorId = this.id;
 
     // Create synchronization message
-    Integer dbValue = this.database.get(latestProcessedWriteId);
+    Integer unstableWriteIndex = unstableWrite == null ? -1 : unstableWrite.index;
+    Integer unstableWriteOriginalReplicaId = unstableWrite == null ? -1
+        : unstableWrite.originalReplicaId;
 
-    CoordinatorElected msg = new CoordinatorElected(this.id, this.id, latestProcessedWriteId,
-        dbValue == null ? -1 : dbValue);
+    Integer dbValue = this.database.get(unstableWriteIndex);
+
+    CoordinatorElected msg = new CoordinatorElected(this.id, this.id,
+        unstableWriteIndex,
+        dbValue == null ? -1 : dbValue, epochTimestamp, unstableWriteOriginalReplicaId);
+
+    // Set new epoch number and timestamp, all messages that were not stable and
+    // also new messages are part of the new epoch
+    this.epochNumber += 1;
+    this.epochTimestamp = 0;
 
     // Restart sending heartbeats
     heartbeatSendTask = scheduleMessage(new SendHeartbeat(), 0, getCoordinatorBeatInterval(), getSelf(), false);
@@ -535,10 +535,14 @@ public class Replica extends AbstractReplica {
     broadcast(msg, false, false);
 
     // Reset for next election
-    callbackOnCoordinatorElected(this.id, 0, 0);
+    callbackOnCoordinatorElected(this.id, unstableWriteIndex, dbValue == null ? -1 : dbValue, epochTimestamp,
+        unstableWriteOriginalReplicaId);
     hasElectionStarted = false;
     receivedElectionAckMap.clear();
     electionRetries = 0;
+
+    // Send all queued write requests
+    reSendEveryQueuedWrite();
   }
 
   /**
@@ -750,15 +754,22 @@ public class Replica extends AbstractReplica {
 
     coordinatorSubstitutionMap.put(coordinatorId, msg.newCoordinatorId);
 
-    // Set the coordinator id
-    this.epochNumber += 1;
-    this.epochTimestamp = 0;
-    coordinatorId = msg.newCoordinatorId;
+    if (epochTimestamp < msg.epochTimestamp) {
+      // If the epoch timestamp of this replica is not equal to the one of the
+      // coordinator, the previous coordinator may have sent an UPDATE, reach the
+      // quorum and sent a WRITEOK. Modify the unstableWrite appropriately and invoke
+      // manually WRITEOK. Otherwise coordinator and the current replica must be both
+      // updated
+      unstableWrite = new WriteNotification(msg.originalReplicaId, msg.dbId, msg.dbValue);
+      WriteOK fakeWriteOk = new WriteOK(msg.epochTimestamp, msg.originalReplicaId);
 
-    // Update transactionId and transactionValue
-    this.database.replace(msg.dbId, msg.dbValue);
+      // Message is for the replica itself, apply the change
+      getSelf().tell(fakeWriteOk, getSelf());
+    }
 
-    super.callbackOnCoordinatorElected(coordinatorId, msg.dbId, msg.dbValue);
+    // Update epoch number (the missing message was of the previous epoch)
+    epochNumber += 1;
+    epochTimestamp = 0;
 
     // heartbeats listening will restart upon receiving a new heartbeat from the new
     // leader, however the new coordinator can shutdown before being able to send
@@ -769,7 +780,39 @@ public class Replica extends AbstractReplica {
     // Reset for next election
     hasElectionStarted = false;
     electionRetries = 0;
+    coordinatorId = msg.newCoordinatorId;
     receivedElectionAckMap.clear();
+
+    // Callback
+    super.callbackOnCoordinatorElected(coordinatorId, msg.dbId, msg.dbValue, msg.epochTimestamp, msg.originalReplicaId);
+
+    // Send again all message currently in clientWriteRequestQueue
+    reSendEveryQueuedWrite();
+
+  }
+
+  private void reSendEveryQueuedWrite() {
+    int size = clientWriteRequestQueue.size();
+    for (int i = 0; i < size; i += 1) {
+
+      ClientWriteRequestPair clientWriteRequestPair = clientWriteRequestQueue.poll();
+      WriteRequest writeRequest = clientWriteRequestPair.writeRequest;
+      WriteRequestToCoordinator writeRequestToCoordinator = new WriteRequestToCoordinator(
+          this.id,
+          writeRequest.index,
+          writeRequest.value);
+
+      if (id == coordinatorId) {
+        // If message is the coordinator itself use akka
+        getSelf().tell(writeRequestToCoordinator, getSelf());
+      } else {
+        // Otherwise use method with latency
+        tell(writeRequestToCoordinator, this.replicasGroup.get(this.coordinatorId));
+      }
+
+      // Re-add the various requests
+      clientWriteRequestQueue.add(clientWriteRequestPair);
+    }
   }
 
   public void onReadRequest(ReadRequest readRequest) {
@@ -811,15 +854,19 @@ public class Replica extends AbstractReplica {
     // Store the pair client-request
     this.clientWriteRequestQueue.add(new ClientWriteRequestPair(getSender(), writeRequest));
 
-    // Forward the request to the coordinator
+    // Forward the request to the coordinator if an election is not in progress
     WriteRequestToCoordinator writeRequestToCoordinator = new WriteRequestToCoordinator(
         this.id,
         writeRequest.index,
         writeRequest.value);
-    tell(writeRequestToCoordinator, this.replicasGroup.get(this.coordinatorId));
+
+    if (!hasElectionStarted) {
+      tell(writeRequestToCoordinator, this.replicasGroup.get(this.coordinatorId));
+    }
   }
 
   public void onWriteRequestToCoordinator(WriteRequestToCoordinator writeRequestToCoordinator) {
+    // Coordinator
     log("WRITE request (" + writeRequestToCoordinator.index + ", " + writeRequestToCoordinator.value + ")");
 
     if (this.writeInProgress) {

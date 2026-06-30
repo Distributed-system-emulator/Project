@@ -326,12 +326,17 @@ public abstract class AbstractReplica extends AbstractActor {
     public final int replicaId;
     public final int dbId;
     public final int dbValue;
+    public final int epochTimestamp;
+    public final int originalReplicaId;
 
-    public CoordinatorElected(int newCoordinatorId, int replicaId, int dbId, int dbValue) {
+    public CoordinatorElected(int newCoordinatorId, int replicaId, int dbId, int dbValue, int epochTimestamp,
+        int originalReplicaId) {
       this.newCoordinatorId = newCoordinatorId;
       this.replicaId = replicaId;
       this.dbId = dbId;
       this.dbValue = dbValue;
+      this.epochTimestamp = epochTimestamp;
+      this.originalReplicaId = originalReplicaId;
     }
 
     @Override
@@ -339,7 +344,7 @@ public abstract class AbstractReplica extends AbstractActor {
       if (obj instanceof CoordinatorElected) {
         CoordinatorElected o = (CoordinatorElected) obj;
         return o.newCoordinatorId == this.newCoordinatorId && o.replicaId == this.replicaId
-            && this.dbId == o.dbId && this.dbValue == o.dbValue;
+            && this.dbId == o.dbId && this.dbValue == o.dbValue && this.epochTimestamp == o.epochTimestamp;
       }
       return false;
     }
@@ -548,10 +553,14 @@ public abstract class AbstractReplica extends AbstractActor {
    *
    * @param newCoordinatorId the id of the newly elected coordinator
    */
-  final void callbackOnCoordinatorElected(int newCoordinatorId, int transactionId, int transactionValue) {
+  final void callbackOnCoordinatorElected(int newCoordinatorId, int transactionId, int transactionValue,
+      int epochTimestamp, int originalReplicaId) {
     log("NEW COORDINATOR elected: " + newCoordinatorId);
     listener.ifPresent(
-        l -> l.tell(new CoordinatorElected(newCoordinatorId, this.id, transactionId, transactionValue), getSelf()));
+        l -> l.tell(
+            new CoordinatorElected(newCoordinatorId, this.id, transactionId, transactionValue, epochTimestamp,
+                originalReplicaId),
+            getSelf()));
   }
 
   /**

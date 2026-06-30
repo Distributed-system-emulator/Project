@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 import akka.actor.Actor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
+import it.unitn.ds.AbstractClient.ReadRequest;
+import it.unitn.ds.AbstractClient.WriteRequest;
 import it.unitn.ds.AbstractReplica.Crash;
 import it.unitn.ds.AbstractReplica.InitSystem;
 
@@ -100,6 +102,19 @@ public class Main {
      * } catch (InterruptedException e) {
      * 
      * }
+     */
+
+    // Write, crash, see if new leader is the correct one
+
+    /*
+     * WriteRequest wr = new WriteRequest(0, 7);
+     * clientsGroup.get(0).tell(wr, Actor.noSender());
+     * 
+     * final Crash crashMsg = new Crash(Crash.Type.Now, 0);
+     * final Map<Integer, ActorRef> rg = replicasGroup;
+     * Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+     * rg.get(COORDINATOR_ID).tell(crashMsg, Actor.noSender());
+     * }, 3000, TimeUnit.MILLISECONDS);
      */
 
     // Crash multiple coordinator one after another
