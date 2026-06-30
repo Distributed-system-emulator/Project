@@ -8,9 +8,15 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 public class Client extends AbstractClient {
+  private int readRequestCount;
+  private int writeRequestCount;
+
   Client(long readTimeoutDelay, long writeTimeoutDelay, Optional<ActorRef> defaultTargetReplica,
       Optional<ActorRef> listener) {
     super(readTimeoutDelay, writeTimeoutDelay, listener, defaultTargetReplica);
+
+    readRequestCount = 0;
+    writeRequestCount = 0;
   }
 
   public static Props props(long readTimeoutDelay, long writeTimeoutDelay, Optional<ActorRef> defaultTargetReplica) {
@@ -58,15 +64,27 @@ public class Client extends AbstractClient {
   }
 
   public void onReadTimeout(ReadTimeout timeout) {
-    // TODO: check if the relative request is already received
-
-    // callbackOnReadTimeout(timeout);
+    readRequestCount--;
+    if (readRequestCount < 0) {
+      callbackOnReadTimeout(timeout);
+    }
   }
 
   public void onWriteTimeout(WriteTimeout timeout) {
-    // TODO: check if the relative request is already received
+    writeRequestCount--;
+    if (writeRequestCount < 0) {
+      callbackOnWriteTimeout(timeout);
+    }
+  }
 
-    // callbackOnWriteTimeout(timeout);
+  public void onReadResult(ReadResult readResult) {
+    readRequestCount++;
+    callbackOnReadResult(readResult);
+  }
+
+  public void onWriteResult(WriteResult writeResult) {
+    writeRequestCount++;
+    callbackOnWriteResult(writeResult);
   }
 
   @Override
@@ -75,8 +93,8 @@ public class Client extends AbstractClient {
         // Listener should be one client itself and should be invoked to log
         // read/write/timeout read/timeout write
         // TODO add your message handlers here .match(, )
-        .match(ReadResult.class, this::callbackOnReadResult)
-        .match(WriteResult.class, this::callbackOnWriteResult)
+        .match(ReadResult.class, this::onReadResult)
+        .match(WriteResult.class, this::onWriteResult)
         .match(ReadTimeout.class, this::onReadTimeout)
         .match(WriteTimeout.class, this::onWriteTimeout)
         .build();

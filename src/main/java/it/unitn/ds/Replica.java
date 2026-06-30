@@ -147,7 +147,7 @@ public class Replica extends AbstractReplica {
   /**
    * The round of ACKs.
    */
-  private long acksRound = 0;
+  private long acksRound;
 
   /**
    * Database of (person index, location) pairs.
@@ -156,7 +156,7 @@ public class Replica extends AbstractReplica {
 
   /**
    * Crash message, if received, updated with the analyzed number of messages of a
-   * certain type
+   * certain type.
    */
   private Crash crashMessage;
 
@@ -181,13 +181,15 @@ public class Replica extends AbstractReplica {
   }
 
   private void init() {
+    this.database = new HashMap<Integer, Integer>();
+    for (int i = 0; i < POSITIONS_LIST_LENGTH; i++) {
+      this.database.put(i, 0);
+    }
+
     this.replicasGroup = new HashMap<Integer, ActorRef>();
     this.writeRequestsQueue = new LinkedList<WriteRequestToCoordinator>();
     this.clientWriteRequestQueue = new LinkedList<ClientWriteRequestPair>();
     this.pendingAcks = new ArrayList<Integer>();
-
-    this.database = new HashMap<Integer, Integer>();
-    this.database.put(0, 0);
 
     this.heartbeatSendTask = null;
     this.heartbeatListeningStatusTask = null;
@@ -202,6 +204,7 @@ public class Replica extends AbstractReplica {
     this.epochTimestamp = 0;
 
     this.writeInProgress = false;
+    this.acksRound = 0;
   }
 
   // === PROPS ===
@@ -298,7 +301,6 @@ public class Replica extends AbstractReplica {
         message,
         getContext().dispatcher(),
         getSelf());
-
   }
 
   private void performUnstableWrite() {
@@ -942,7 +944,7 @@ public class Replica extends AbstractReplica {
   }
 
   public void onWriteOK(WriteOK writeOK) {
-    log("WRITE OK");
+    // log("WRITE OK");
 
     performUnstableWrite();
 
