@@ -68,8 +68,9 @@ public class Main {
     for (int i = 0; i < N_CLIENTS; i += 1) {
       ActorRef replica = replicasGroup.get(i % replicasGroup.size());
       clientsGroup.add(system.actorOf(
-          Client.props(AbstractReplica.MAX_LATENCY + 1, AbstractReplica.MAX_LATENCY + 1,
-              Optional.ofNullable(replica))));
+          Client.props(300, 800,
+              Optional.ofNullable(replica)),
+          String.valueOf(i)));
     }
 
     /*
@@ -85,9 +86,19 @@ public class Main {
 
     // Make shared state immutable
 
-    clientsGroup = Collections.unmodifiableList(clientsGroup);
+    // clientsGroup = Collections.unmodifiableList(clientsGroup);
 
     // MANUAL TEST
+
+    // AbstractClient.ReadRequest rq = new AbstractClient.ReadRequest(0);
+    // clientsGroup.get(0).tell(rq, ActorRef.noSender());
+    // rq = new AbstractClient.ReadRequest(0);
+    // clientsGroup.get(0).tell(rq, ActorRef.noSender());
+
+    // AbstractClient.WriteRequest wq = new AbstractClient.WriteRequest(0, 5);
+    // clientsGroup.get(0).tell(wq, ActorRef.noSender());
+    // wq = new AbstractClient.WriteRequest(0, 8);
+    // clientsGroup.get(0).tell(wq, ActorRef.noSender());
 
     /*
      * clientsGroup.get(0).tell(new AbstractClient.WriteRequest(0, 10),
