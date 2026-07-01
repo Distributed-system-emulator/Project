@@ -117,7 +117,7 @@ public abstract class AbstractReplica extends AbstractActor {
     // This means every node must wait
     // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
     // every node to process the message
-    return getSystemNumberOfActors() * (getMaxLatency() + 100);
+    return getSystemNumberOfActors() * (getMaxLatency() + 150);
   }
 
   /**
@@ -133,7 +133,7 @@ public abstract class AbstractReplica extends AbstractActor {
     // For example, considering the worst scenario, all replica send an election
     // message, replica 1 has to ack replica 6 for the ack messages of 6,5,4,3 and
     // 2.
-    return getMaxLatency() * 2 + 100 * getSystemNumberOfActors();
+    return getMaxLatencyPlusTolerance() * 2 + 50 * getSystemNumberOfActors();
   }
 
   /**
@@ -335,15 +335,24 @@ public abstract class AbstractReplica extends AbstractActor {
   }
 
   public static class CheckElectionAckReception implements java.io.Serializable {
+    public final int crashedCoordinatorId;
     public final int originalReplicaId;
     public final int previousAckCounter;
     public final Optional<Map<Integer, Integer>> receivedPreviousReplicasMap;
 
-    CheckElectionAckReception(int originalReplicaId, int previousAckCounter,
+    CheckElectionAckReception(int crashedCoordinatorId, int originalReplicaId, int previousAckCounter,
         Optional<Map<Integer, Integer>> receivedPreviousReplicasMap) {
+      this.crashedCoordinatorId = crashedCoordinatorId;
       this.originalReplicaId = originalReplicaId;
       this.previousAckCounter = previousAckCounter;
       this.receivedPreviousReplicasMap = receivedPreviousReplicasMap;
+    }
+
+    @Override
+    public String toString() {
+      return "CheckElectionAckReception(crashedCoordinatorId=" + crashedCoordinatorId + ", originalReplicaId="
+          + originalReplicaId + ", previousAckCounter: " + previousAckCounter + ", receivedPreviousReplicasMap:"
+          + receivedPreviousReplicasMap.toString() + ")";
     }
   }
 
@@ -493,24 +502,28 @@ public abstract class AbstractReplica extends AbstractActor {
   public static class ElectionAck implements Serializable {
     public final int originalReplicaId;
     public final int recipientReplicaId;
+    public final boolean removedFromRing;
 
-    ElectionAck(int originalReplicaId, int recipientReplicaId) {
+    ElectionAck(int originalReplicaId, int recipientReplicaId, boolean removedFromRing) {
       this.originalReplicaId = originalReplicaId;
       this.recipientReplicaId = recipientReplicaId;
+      this.removedFromRing = removedFromRing;
     }
 
     @Override
     public boolean equals(Object obj) {
       if (obj instanceof ElectionAck) {
         return ((ElectionAck) obj).recipientReplicaId == this.recipientReplicaId
-            && ((ElectionAck) obj).originalReplicaId == this.originalReplicaId;
+            && ((ElectionAck) obj).originalReplicaId == this.originalReplicaId
+            && ((ElectionAck) obj).removedFromRing == this.removedFromRing;
       }
       return false;
     }
 
     @Override
     public String toString() {
-      return "ElectionAck(recipientReplica=" + recipientReplicaId + ", originalReplicaId=" + originalReplicaId + ")";
+      return "ElectionAck(recipientReplica=" + recipientReplicaId + ", originalReplicaId=" + originalReplicaId
+          + ", removedFromRing=" + removedFromRing + ")";
     }
   }
 
