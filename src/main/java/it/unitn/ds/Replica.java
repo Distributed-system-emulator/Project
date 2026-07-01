@@ -315,6 +315,13 @@ public class Replica extends AbstractReplica {
     this.latestProcessedWriteId = this.unstableWrite.index;
 
     callbackOnUpdateApplied(this.unstableWrite.index, this.unstableWrite.value);
+
+    if (crashMessage != null && crashMessage.type == Crash.Type.Update) {
+      if (willReplicaCrash()) {
+        crashNow();
+        return;
+      }
+    }
   }
 
   private void processNextWriteIfAny() {
@@ -343,7 +350,6 @@ public class Replica extends AbstractReplica {
     }
 
     this.crashMessage = how_to_crash;
-
   }
 
   private void crashNow() {
@@ -415,7 +421,6 @@ public class Replica extends AbstractReplica {
   }
 
   private void checkHeartbeatMsgStatus(CheckHeartbeatMsgStatus msg) {
-
     if (crashMessage != null && crashMessage.type == Crash.Type.Heartbeat) {
       if (willReplicaCrash()) {
         crashNow();
@@ -897,8 +902,6 @@ public class Replica extends AbstractReplica {
   }
 
   public void onWriteOK(WriteOK writeOK) {
-    // log("WRITE OK");
-
     performUnstableWrite();
 
     if (this.id != this.coordinatorId) {
@@ -915,6 +918,13 @@ public class Replica extends AbstractReplica {
           this.id);
 
       tell(writeResult, this.clientWriteRequestQueue.poll().client);
+    }
+
+    if (crashMessage != null && crashMessage.type == Crash.Type.WriteOK) {
+      if (willReplicaCrash()) {
+        crashNow();
+        return;
+      }
     }
   }
 
