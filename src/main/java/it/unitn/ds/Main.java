@@ -147,8 +147,7 @@ public class Main {
      * }, 15000, TimeUnit.MILLISECONDS);
      */
 
-    // Crash before synchronization: add the following code on
-    // sendSynchronization message
+    // Crash before synchronization
 
     /*
      * final Crash crashMsgSync = new Crash(Crash.Type.ElectionSync, 0);

@@ -2,6 +2,7 @@ package it.unitn.ds;
 
 import java.io.Serializable;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -9,6 +10,7 @@ import java.util.Optional;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.japi.pf.ReceiveBuilder;
+import java.util.Random;
 
 public abstract class AbstractReplica extends AbstractActor {
   // === Constants ===
@@ -16,7 +18,6 @@ public abstract class AbstractReplica extends AbstractActor {
   public static final int MAX_LATENCY = 20;
   public static final int COORDINATOR_BEAT_INTERVAL = 1000;
   public static final int POSITIONS_LIST_LENGTH = 100;
-  public static final int HEARTBEAT_STATUS_CHECK_WAIT_TIME = 2000;
   public static final int SYNC_MESSAGE_WAIT_TIME = 2000;
 
   // === Local Data ===
@@ -28,7 +29,6 @@ public abstract class AbstractReplica extends AbstractActor {
   private int minLatency;
   private int maxLatency;
   private int coordinatorBeatInterval;
-  private int heartbeatStatusCheckWaitTime;
   private int syncMessageWaitTime;
   private final Map<ActorRef, ActorRef> channels = new HashMap<>();
 
@@ -36,15 +36,14 @@ public abstract class AbstractReplica extends AbstractActor {
   private final Optional<ActorRef> listener;
 
   AbstractReplica(int id) {
-    this(id, MIN_LATENCY, MAX_LATENCY, COORDINATOR_BEAT_INTERVAL, HEARTBEAT_STATUS_CHECK_WAIT_TIME,
+    this(id, MIN_LATENCY, MAX_LATENCY, COORDINATOR_BEAT_INTERVAL,
         SYNC_MESSAGE_WAIT_TIME, Optional.empty());
   }
 
-  AbstractReplica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval, int heartbeatStatusCheckWaitTime,
+  AbstractReplica(int id, int minLatency, int maxLatency, int coordinatorBeatInterval,
       int syncMessageWaitTime, Optional<ActorRef> listener) {
     this.id = id;
     this.coordinatorBeatInterval = coordinatorBeatInterval;
-    this.heartbeatStatusCheckWaitTime = heartbeatStatusCheckWaitTime;
     this.syncMessageWaitTime = syncMessageWaitTime;
     this.listener = listener;
     setNetworkLatency(minLatency, maxLatency);
@@ -90,15 +89,6 @@ public abstract class AbstractReplica extends AbstractActor {
 
   /**
    * 
-   * @return How much time the replica wait before checking whether the heartbeat
-   *         listening process started after an election
-   */
-  public int getHeartbeatStatusCheckWaitTime() {
-    return heartbeatStatusCheckWaitTime;
-  }
-
-  /**
-   * 
    * @return how much ms the replicas wait before waiting for the synchronization
    *         message
    */
@@ -112,12 +102,13 @@ public abstract class AbstractReplica extends AbstractActor {
    *         replica want to send an election message
    */
   public int getNewElectionMessageWaitTime() {
-    // Before sending an election message, wait for the worst case: the node id+1
-    // already sent one (check is performed upon receiving the scheduled message).
-    // This means every node must wait
-    // replicasGroup.size*(max_latency+100), where 100 is the estimated time for
-    // every node to process the message
-    return getSystemNumberOfActors() * (getMaxLatency() + 150);
+    // Before sending an election message, wait a random time between MIN_LATENCY
+    // and MAX_LATENCY (multiplied by the number of actors to cover the fact that a
+    // message may be traveling from a very distant replica)
+
+    Date date = new Date();
+    Random rng = new Random(date.getTime());
+    return getSystemNumberOfActors() * rng.nextInt(MIN_LATENCY, MAX_LATENCY + 1);
   }
 
   /**
